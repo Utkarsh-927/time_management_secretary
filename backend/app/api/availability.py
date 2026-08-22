@@ -224,9 +224,7 @@ def update_availability(
     return availability
 
 
-# -------------------------
-# DELETE AVAILABILITY
-# -------------------------
+# delete availability
 
 @router.delete("/{availability_id}")
 def delete_availability(

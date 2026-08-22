@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, time
 
-from sqlalchemy import Column, Date, DateTime, Integer, String, Time, Text
+from sqlalchemy import Column, Date, Integer, String, Time, Text
 
 from ..database.database import Base
 
@@ -8,28 +8,39 @@ from ..database.database import Base
 class Availability(Base):
     __tablename__ = "availability"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
-    # Date range
-    start_date = Column(Date, nullable=False)
-    end_date = Column(Date, nullable=False)
+    start_date = Column(
+        Date,
+        nullable=False
+    )
 
-    # Daily time window
-    start_time = Column(Time, nullable=True)
-    end_time = Column(Time, nullable=True)
+    end_date = Column(
+        Date,
+        nullable=False
+    )
 
-    # none, daily, weekly
+    start_time = Column(
+        Time,
+        nullable=False
+    )
+
+    end_time = Column(
+        Time,
+        nullable=False
+    )
+
     recurrence = Column(
-        String(20),
+        String(50),
         default="none",
         nullable=False
     )
 
-    
-    # "Monday,Wednesday,Friday"
-    weekdays = Column(Text, nullable=True)
-
-    created_at = Column(
-        DateTime,
-        default=datetime.utcnow
+    weekdays = Column(
+        Text,
+        nullable=True
     )

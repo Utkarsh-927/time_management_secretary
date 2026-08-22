@@ -1,0 +1,175 @@
+{
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": ["string", "null"]
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "deadline": {
+            "type": ["string", "null"]
+          },
+          "estimated_duration": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "importance": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 5
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "deadline",
+          "estimated_duration",
+          "importance"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "meetings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": ["string", "null"]
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "start_time": {
+            "type": ["string", "null"]
+          },
+          "end_time": {
+            "type": ["string", "null"]
+          },
+          "location": {
+            "type": ["string", "null"]
+          },
+          "participants": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "start_time",
+          "end_time",
+          "location",
+          "participants"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "availability": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": ["string", "null"]
+          },
+          "end_date": {
+            "type": ["string", "null"]
+          },
+          "start_time": {
+            "type": ["string", "null"]
+          },
+          "end_time": {
+            "type": ["string", "null"]
+          },
+          "recurrence": {
+            "type": ["string", "null"],
+            "enum": [
+              "none",
+              "daily",
+              "weekly",
+              null
+            ]
+          },
+          "weekdays": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string",
+              "enum": [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday"
+              ]
+            }
+          }
+        },
+        "required": [
+          "start_date",
+          "end_date",
+          "start_time",
+          "end_time",
+          "recurrence",
+          "weekdays"
+        ],
+        "additionalProperties": false
+      }
+    },
+
+    "reminders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": ["string", "null"]
+          },
+          "message": {
+            "type": ["string", "null"]
+          },
+          "reminder_time": {
+            "type": ["string", "null"]
+          },
+          "reminder_type": {
+            "type": ["string", "null"],
+            "enum": [
+              "before_event",
+              "at_time",
+              "after_event",
+              null
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "message",
+          "reminder_time",
+          "reminder_type"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+
+  "required": [
+    "tasks",
+    "meetings",
+    "availability",
+    "reminders"
+  ],
+
+  "additionalProperties": false
+}

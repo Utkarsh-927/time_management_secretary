@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: management-model-api
+    runtime: python
+    plan: free
+
+    buildCommand: pip install -r requirements.production.txt
+
+    startCommand: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      - key: DEBUG
+        value: "0"
+
+      - key: DATABASE_URL
+        value: sqlite:///./data/management_model.db
+
+      - key: MODEL_PATH
+        value: /opt/render/project/src/models/gemma-3-1b-it-q4_0.gguf
+
+      - key: CORS_ORIGINS
+        value: https://singhutkarshji-management-model.hf.space

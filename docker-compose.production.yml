@@ -1,0 +1,16 @@
+services:
+  management-model:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7860:7860"
+    env_file:
+      - .env
+    volumes:
+      - management_data:/data
+      - ./models:/models:ro
+    restart: unless-stopped
+
+volumes:
+  management_data:

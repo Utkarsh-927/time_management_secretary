@@ -4,13 +4,17 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 
-class MeetingCreate(BaseModel):
+class MeetingBase(BaseModel):
     title: str
     description: Optional[str] = None
     start_time: datetime
     end_time: datetime
     location: Optional[str] = None
     participants: Optional[str] = None
+
+
+class MeetingCreate(MeetingBase):
+    pass
 
 
 class MeetingUpdate(BaseModel):
@@ -20,12 +24,12 @@ class MeetingUpdate(BaseModel):
     end_time: Optional[datetime] = None
     location: Optional[str] = None
     participants: Optional[str] = None
-    status: Optional[str] = None
 
 
-class MeetingResponse(MeetingCreate):
+class MeetingResponse(MeetingBase):
     id: int
-    status: str
     created_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True
+    )

@@ -8,7 +8,7 @@ from ..models.meeting import Meeting
 from ..schemas.meeting import (
     MeetingCreate,
     MeetingResponse,
-    MeetingUpdate
+    MeetingUpdate,
 )
 
 
@@ -18,15 +18,20 @@ router = APIRouter(
 )
 
 
-# -------------------------
+# ==========================================
 # CREATE MEETING
-# -------------------------
+# ==========================================
 
-@router.post("/", response_model=MeetingResponse)
+@router.post(
+    "/",
+    response_model=MeetingResponse,
+    status_code=201
+)
 def create_meeting(
     meeting_data: MeetingCreate,
     db: Session = Depends(get_db)
 ):
+    # Validate meeting time
     if meeting_data.end_time <= meeting_data.start_time:
         raise HTTPException(
             status_code=400,
@@ -49,28 +54,34 @@ def create_meeting(
     return meeting
 
 
-# -------------------------
+# ==========================================
 # GET ALL MEETINGS
-# -------------------------
+# ==========================================
 
-@router.get("/", response_model=List[MeetingResponse])
+@router.get(
+    "/",
+    response_model=List[MeetingResponse]
+)
 def get_meetings(
     db: Session = Depends(get_db)
 ):
     meetings = (
         db.query(Meeting)
-        .order_by(Meeting.start_time)
+        .order_by(Meeting.start_time.asc())
         .all()
     )
 
     return meetings
 
 
-# -------------------------
+# ==========================================
 # GET SINGLE MEETING
-# -------------------------
+# ==========================================
 
-@router.get("/{meeting_id}", response_model=MeetingResponse)
+@router.get(
+    "/{meeting_id}",
+    response_model=MeetingResponse
+)
 def get_meeting(
     meeting_id: int,
     db: Session = Depends(get_db)
@@ -90,11 +101,14 @@ def get_meeting(
     return meeting
 
 
-# -------------------------
+# ==========================================
 # UPDATE MEETING
-# -------------------------
+# ==========================================
 
-@router.put("/{meeting_id}", response_model=MeetingResponse)
+@router.put(
+    "/{meeting_id}",
+    response_model=MeetingResponse
+)
 def update_meeting(
     meeting_id: int,
     meeting_data: MeetingUpdate,
@@ -116,22 +130,24 @@ def update_meeting(
         exclude_unset=True
     )
 
-    new_start = update_data.get(
+    # Check resulting start/end times
+    new_start_time = update_data.get(
         "start_time",
         meeting.start_time
     )
 
-    new_end = update_data.get(
+    new_end_time = update_data.get(
         "end_time",
         meeting.end_time
     )
 
-    if new_end <= new_start:
+    if new_end_time <= new_start_time:
         raise HTTPException(
             status_code=400,
             detail="End time must be after start time"
         )
 
+    # Apply changes
     for key, value in update_data.items():
         setattr(meeting, key, value)
 
@@ -141,11 +157,13 @@ def update_meeting(
     return meeting
 
 
-# -------------------------
+# ==========================================
 # DELETE MEETING
-# -------------------------
+# ==========================================
 
-@router.delete("/{meeting_id}")
+@router.delete(
+    "/{meeting_id}"
+)
 def delete_meeting(
     meeting_id: int,
     db: Session = Depends(get_db)

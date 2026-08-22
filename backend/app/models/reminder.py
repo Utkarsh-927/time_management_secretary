@@ -14,7 +14,7 @@ class Reminder(Base):
 
     message = Column(Text, nullable=True)
 
-    reminder_time = Column(DateTime, nullable=False)
+    reminder_time = Column(DateTime, nullable=True)
 
     # task / meeting / general
     reminder_type = Column(
