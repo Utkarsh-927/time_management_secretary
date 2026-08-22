@@ -25,25 +25,13 @@ from .api.dashboard import router as dashboard_router
 from .api.planner import router as planner_router
 
 
-# ============================================================
-# ENVIRONMENT
-# ============================================================
-
 load_dotenv()
 
-
-# ============================================================
-# DATABASE TABLES
-# ============================================================
 
 Base.metadata.create_all(
     bind=engine
 )
 
-
-# ============================================================
-# FRONTEND URL
-# ============================================================
 
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",
@@ -51,9 +39,21 @@ FRONTEND_URL = os.getenv(
 )
 
 
-# ============================================================
-# APPLICATION
-# ============================================================
+allowed_origins = [
+    origin.strip()
+    for origin in FRONTEND_URL.split(",")
+    if origin.strip()
+]
+
+
+# Always allow local development.
+for origin in [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]:
+    if origin not in allowed_origins:
+        allowed_origins.append(origin)
+
 
 app = FastAPI(
     title="Management Model",
@@ -65,46 +65,19 @@ app = FastAPI(
 )
 
 
-# ============================================================
-# CORS
-# ============================================================
-
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
-if FRONTEND_URL not in allowed_origins:
-    allowed_origins.append(
-        FRONTEND_URL
-    )
-
-
 app.add_middleware(
     CORSMiddleware,
-
     allow_origins=allowed_origins,
-
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
 )
 
-
-# ============================================================
-# STARTUP
-# ============================================================
 
 @app.on_event("startup")
 def startup_event():
     start_reminder_worker()
 
-
-# ============================================================
-# ROUTERS
-# ============================================================
 
 app.include_router(
     task_router
@@ -143,10 +116,6 @@ app.include_router(
 )
 
 
-# ============================================================
-# ROOT
-# ============================================================
-
 @app.get("/")
 def root():
     return {
@@ -155,10 +124,6 @@ def root():
         )
     }
 
-
-# ============================================================
-# HEALTH CHECK
-# ============================================================
 
 @app.get("/health")
 def health_check():
