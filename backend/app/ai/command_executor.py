@@ -15,9 +15,6 @@ from .commands import (
 )
 
 
-# ============================================================
-# RELATIVE DATE HELPERS
-# ============================================================
 
 WEEKDAY_NAMES = {
     "monday": 0,
@@ -118,10 +115,6 @@ def resolve_date_phrase(
 
     text = phrase.strip().lower()
 
-    # --------------------------------------------------------
-    # SIMPLE RELATIVE DATES
-    # --------------------------------------------------------
-
     if text == "today":
         return date.today()
 
@@ -137,9 +130,6 @@ def resolve_date_phrase(
             - timedelta(days=1)
         )
 
-    # --------------------------------------------------------
-    # NEXT WEEKDAY
-    # --------------------------------------------------------
 
     if text.startswith("next "):
 
@@ -151,9 +141,6 @@ def resolve_date_phrase(
             weekday
         )
 
-    # --------------------------------------------------------
-    # THIS WEEKDAY
-    # --------------------------------------------------------
 
     if text.startswith("this "):
 
@@ -165,11 +152,6 @@ def resolve_date_phrase(
             weekday
         )
 
-    # --------------------------------------------------------
-    # PLAIN WEEKDAY
-    #
-    # "Friday" = nearest upcoming Friday.
-    # --------------------------------------------------------
 
     if text in WEEKDAY_NAMES:
 
@@ -189,9 +171,6 @@ def resolve_date_phrase(
             + timedelta(days=days_ahead)
         )
 
-    # --------------------------------------------------------
-    # ISO DATE
-    # --------------------------------------------------------
 
     try:
         return date.fromisoformat(
@@ -201,9 +180,6 @@ def resolve_date_phrase(
         return None
 
 
-# ============================================================
-# TASK FINDER
-# ============================================================
 
 def find_task(
     db: Session,
@@ -232,9 +208,6 @@ def find_task(
         .all()
     )
 
-    # --------------------------------------------------------
-    # EXACT MATCH
-    # --------------------------------------------------------
 
     for task in tasks:
 
@@ -256,10 +229,7 @@ def find_task(
         if task_title_text == normalized:
             return task
 
-    # --------------------------------------------------------
-    # PARTIAL MATCH
-    # --------------------------------------------------------
-
+ 
     for task in tasks:
 
         task_title = getattr(
@@ -286,9 +256,6 @@ def find_task(
     return None
 
 
-# ============================================================
-# MEETING FINDER
-# ============================================================
 
 def find_meeting(
     db: Session,
@@ -311,9 +278,6 @@ def find_meeting(
     if not meetings:
         return None
 
-    # --------------------------------------------------------
-    # GENERIC MEETING COMMAND
-    # --------------------------------------------------------
 
     if (
         title is None
@@ -329,10 +293,7 @@ def find_meeting(
     if not normalized:
         return meetings[0]
 
-    # --------------------------------------------------------
-    # EXACT MATCH
-    # --------------------------------------------------------
-
+ 
     for meeting in meetings:
 
         meeting_title = getattr(
@@ -353,9 +314,6 @@ def find_meeting(
         if meeting_title_text == normalized:
             return meeting
 
-    # --------------------------------------------------------
-    # PARTIAL MATCH
-    # --------------------------------------------------------
 
     for meeting in meetings:
 
@@ -383,9 +341,6 @@ def find_meeting(
     return None
 
 
-# ============================================================
-# TASK UPDATE
-# ============================================================
 
 def execute_update_task(
     db: Session,
@@ -421,9 +376,6 @@ def execute_update_task(
 
     updated_fields = []
 
-    # ========================================================
-    # IMPORTANCE
-    # ========================================================
 
     if "importance" in changes:
 
@@ -449,9 +401,6 @@ def execute_update_task(
                 "importance"
             )
 
-    # ========================================================
-    # DEADLINE
-    # ========================================================
 
     deadline_phrase = changes.get(
         "deadline_phrase"
@@ -481,10 +430,7 @@ def execute_update_task(
             None,
         )
 
-        # ----------------------------------------------------
-        # Preserve existing deadline time
-        # ----------------------------------------------------
-
+    
         if isinstance(
             current_deadline,
             datetime,
@@ -516,10 +462,7 @@ def execute_update_task(
             "deadline"
         )
 
-    # ========================================================
-    # VALIDATE CHANGES
-    # ========================================================
-
+ 
     if not updated_fields:
 
         return {
@@ -530,10 +473,7 @@ def execute_update_task(
             ),
         }
 
-    # ========================================================
-    # SAVE
-    # ========================================================
-
+   
     db.commit()
     db.refresh(task)
 
@@ -592,9 +532,6 @@ def execute_update_task(
     }
 
 
-# ============================================================
-# TASK DELETE
-# ============================================================
 
 def execute_delete_task(
     db: Session,
@@ -644,10 +581,6 @@ def execute_delete_task(
         },
     }
 
-
-# ============================================================
-# MEETING UPDATE
-# ============================================================
 
 def execute_update_meeting(
     db: Session,
@@ -738,9 +671,6 @@ def execute_update_meeting(
             ),
         }
 
-    # ========================================================
-    # PRESERVE DURATION
-    # ========================================================
 
     duration = (
         current_end
@@ -771,10 +701,7 @@ def execute_update_meeting(
         new_end,
     )
 
-    # ========================================================
-    # SAVE
-    # ========================================================
-
+ 
     db.commit()
     db.refresh(meeting)
 
@@ -830,9 +757,6 @@ def execute_update_meeting(
     }
 
 
-# ============================================================
-# MEETING DELETE
-# ============================================================
 
 def execute_delete_meeting(
     db: Session,
@@ -883,9 +807,7 @@ def execute_delete_meeting(
     }
 
 
-# ============================================================
-# REMINDER CREATION
-# ============================================================
+
 
 def execute_create_reminder(
     db: Session,
@@ -928,9 +850,7 @@ def execute_create_reminder(
 
     meeting = None
 
-    # ========================================================
-    # FIND UPCOMING MEETING
-    # ========================================================
+
 
     if target == "meeting":
 
@@ -985,9 +905,7 @@ def execute_create_reminder(
             ),
         }
 
-    # ========================================================
-    # CALCULATE REMINDER TIME
-    # ========================================================
+ 
 
     reminder_time = (
         meeting_start
@@ -996,9 +914,7 @@ def execute_create_reminder(
         )
     )
 
-    # ========================================================
-    # CREATE REMINDER
-    # ========================================================
+
 
     reminder = Reminder(
         title="Meeting Reminder",
@@ -1068,9 +984,7 @@ def execute_create_reminder(
     }
 
 
-# ============================================================
-# EXECUTE COMMAND
-# ============================================================
+
 
 def execute_command(
     db: Session,
@@ -1084,9 +998,6 @@ def execute_command(
         "intent"
     )
 
-    # ========================================================
-    # UPDATE TASK
-    # ========================================================
 
     if intent == COMMAND_UPDATE_TASK:
 
@@ -1095,9 +1006,7 @@ def execute_command(
             command,
         )
 
-    # ========================================================
-    # DELETE TASK
-    # ========================================================
+
 
     if intent == COMMAND_DELETE_TASK:
 
@@ -1106,9 +1015,7 @@ def execute_command(
             command,
         )
 
-    # ========================================================
-    # UPDATE MEETING
-    # ========================================================
+
 
     if intent == COMMAND_UPDATE_MEETING:
 
@@ -1117,9 +1024,6 @@ def execute_command(
             command,
         )
 
-    # ========================================================
-    # DELETE MEETING
-    # ========================================================
 
     if intent == COMMAND_DELETE_MEETING:
 
@@ -1128,9 +1032,7 @@ def execute_command(
             command,
         )
 
-    # ========================================================
-    # CREATE REMINDER
-    # ========================================================
+
 
     if intent == COMMAND_CREATE_REMINDER:
 
@@ -1139,9 +1041,7 @@ def execute_command(
             command,
         )
 
-    # ========================================================
-    # UNKNOWN COMMAND
-    # ========================================================
+
 
     return {
         "success": False,
@@ -1151,9 +1051,7 @@ def execute_command(
     }
 
 
-# ============================================================
-# MODULE TEST
-# ============================================================
+
 
 if __name__ == "__main__":
 

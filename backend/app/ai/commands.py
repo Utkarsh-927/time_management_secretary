@@ -2,9 +2,7 @@ import re
 from typing import Any
 
 
-# ============================================================
-# COMMAND TYPES
-# ============================================================
+
 
 COMMAND_NONE = "none"
 
@@ -17,9 +15,7 @@ COMMAND_DELETE_MEETING = "delete_meeting"
 COMMAND_CREATE_REMINDER = "create_reminder"
 
 
-# ============================================================
-# WEEKDAYS
-# ============================================================
+
 
 WEEKDAY_PATTERN = (
     r"monday|tuesday|wednesday|thursday|"
@@ -27,9 +23,6 @@ WEEKDAY_PATTERN = (
 )
 
 
-# ============================================================
-# HELPERS
-# ============================================================
 
 def clean_title(value: str | None):
     """
@@ -63,9 +56,6 @@ def clean_title(value: str | None):
     return value.strip() or None
 
 
-# ============================================================
-# IMPORTANCE
-# ============================================================
 
 def importance_from_command(
     message: str,
@@ -77,10 +67,7 @@ def importance_from_command(
 
     text = message.lower()
 
-    # -----------------------------------
-    # CRITICAL
-    # -----------------------------------
-
+ 
     if any(
         phrase in text
         for phrase in [
@@ -91,10 +78,7 @@ def importance_from_command(
     ):
         return 5
 
-    # -----------------------------------
-    # HIGH
-    # -----------------------------------
-
+  
     if any(
         phrase in text
         for phrase in [
@@ -105,10 +89,7 @@ def importance_from_command(
     ):
         return 4
 
-    # -----------------------------------
-    # MEDIUM
-    # -----------------------------------
-
+ 
     if any(
         phrase in text
         for phrase in [
@@ -119,10 +100,7 @@ def importance_from_command(
     ):
         return 3
 
-    # -----------------------------------
-    # LOW
-    # -----------------------------------
-
+  
     if any(
         phrase in text
         for phrase in [
@@ -136,9 +114,6 @@ def importance_from_command(
     return None
 
 
-# ============================================================
-# TASK TITLE EXTRACTION
-# ============================================================
 
 def extract_task_title(
     message: str,
@@ -156,13 +131,7 @@ def extract_task_title(
 
     text = message.strip()
 
-    # ========================================================
-    # MOVE / RESCHEDULE
-    #
-    # Move my ML assignment to Friday.
-    # Move the Python task to tomorrow.
-    # ========================================================
-
+   
     match = re.search(
         r"\b(?:move|reschedule|shift)"
         r"\s+(?:my|the)\s+"
@@ -200,13 +169,7 @@ def extract_task_title(
             title
         )
 
-    # ========================================================
-    # DELETE
-    #
-    # Cancel my Python task.
-    # Delete the ML assignment task.
-    # ========================================================
-
+ 
     match = re.search(
         r"\b(?:cancel|delete|remove|drop)"
         r"\s+(?:my|the)\s+"
@@ -222,24 +185,14 @@ def extract_task_title(
             match.group(1)
         )
 
-    # ========================================================
-    # PRIORITY UPDATE
-    #
-    # Make Python task high priority.
-    # Make my Python task critical.
-    # Set Python task to low priority.
-    # ========================================================
-
+ 
     importance = importance_from_command(
         message
     )
 
     if importance is not None:
 
-        # -----------------------------------------------
-        # "Make my Python task critical"
-        # -----------------------------------------------
-
+     
         match = re.search(
             r"\b(?:make|set|change)"
             r"\s+(?:my|the)\s+"
@@ -269,10 +222,7 @@ def extract_task_title(
                 match.group(1)
             )
 
-        # -----------------------------------------------
-        # "Make Python task critical"
-        # -----------------------------------------------
-
+     
         match = re.search(
             r"\b(?:make|set|change)"
             r"\s+"
@@ -305,9 +255,6 @@ def extract_task_title(
     return None
 
 
-# ============================================================
-# MEETING TITLE EXTRACTION
-# ============================================================
 
 def extract_meeting_title(
     message: str,
@@ -323,10 +270,7 @@ def extract_meeting_title(
 
     text = message.strip()
 
-    # --------------------------------------------------------
-    # "my team meeting"
-    # --------------------------------------------------------
-
+  
     match = re.search(
         r"\b(?:my|the)\s+"
         r"(.+?)\s+meeting\b",
@@ -342,10 +286,7 @@ def extract_meeting_title(
             title
         )
 
-    # --------------------------------------------------------
-    # Generic meeting
-    # --------------------------------------------------------
-
+ 
     if re.search(
         r"\bmeeting\b",
         text,
@@ -356,9 +297,6 @@ def extract_meeting_title(
     return None
 
 
-# ============================================================
-# DATE / WEEKDAY EXTRACTION
-# ============================================================
 
 def extract_relative_date(
     message: str,
@@ -377,27 +315,18 @@ def extract_relative_date(
     """
 
     patterns = [
-        # -----------------------------------------------
-        # next Friday / this Friday
-        # -----------------------------------------------
-
+       
         (
             rf"\b(?:next|this)\s+"
             rf"(?:{WEEKDAY_PATTERN})\b"
         ),
 
-        # -----------------------------------------------
-        # plain Friday
-        # -----------------------------------------------
-
+    
         (
             rf"\b(?:{WEEKDAY_PATTERN})\b"
         ),
 
-        # -----------------------------------------------
-        # relative dates
-        # -----------------------------------------------
-
+    
         r"\b(?:today|tomorrow|yesterday)\b",
     ]
 
@@ -418,9 +347,6 @@ def extract_relative_date(
     return None
 
 
-# ============================================================
-# TASK COMMANDS
-# ============================================================
 
 def detect_task_command(
     message: str,
@@ -431,9 +357,6 @@ def detect_task_command(
 
     text = message.lower().strip()
 
-    # ========================================================
-    # DELETE / CANCEL TASK
-    # ========================================================
 
     if (
         re.search(
@@ -459,9 +382,6 @@ def detect_task_command(
             "changes": {},
         }
 
-    # ========================================================
-    # PRIORITY UPDATE
-    # ========================================================
 
     if (
         re.search(
@@ -499,9 +419,6 @@ def detect_task_command(
                 },
             }
 
-    # ========================================================
-    # MOVE / RESCHEDULE TASK
-    # ========================================================
 
     if (
         re.search(
@@ -544,10 +461,6 @@ def detect_task_command(
     return None
 
 
-# ============================================================
-# MEETING COMMANDS
-# ============================================================
-
 def detect_meeting_command(
     message: str,
 ):
@@ -563,10 +476,7 @@ def detect_meeting_command(
     ):
         return None
 
-    # ========================================================
-    # DELETE / CANCEL
-    # ========================================================
-
+ 
     if re.search(
         r"\b(?:cancel|delete|remove)\b",
         text,
@@ -584,10 +494,7 @@ def detect_meeting_command(
             "changes": {},
         }
 
-    # ========================================================
-    # MOVE / RESCHEDULE
-    # ========================================================
-
+   
     if re.search(
         r"\b(?:move|reschedule|shift|change)\b",
         text,
@@ -618,9 +525,6 @@ def detect_meeting_command(
     return None
 
 
-# ============================================================
-# REMINDER COMMAND
-# ============================================================
 
 def detect_reminder_command(
     message: str,
@@ -637,9 +541,6 @@ def detect_reminder_command(
     if "remind me" not in text:
         return None
 
-    # ========================================================
-    # HOURS BEFORE
-    # ========================================================
 
     hour_match = re.search(
         r"(\d+(?:\.\d+)?)"
@@ -671,10 +572,7 @@ def detect_reminder_command(
             "message": message.strip(),
         }
 
-    # ========================================================
-    # MINUTES BEFORE
-    # ========================================================
-
+ 
     minute_match = re.search(
         r"(\d+)"
         r"\s*minutes?"
@@ -706,9 +604,6 @@ def detect_reminder_command(
     return None
 
 
-# ============================================================
-# MAIN COMMAND DETECTOR
-# ============================================================
 
 def detect_command(
     message: str,
@@ -731,10 +626,6 @@ def detect_command(
             "intent": COMMAND_NONE
         }
 
-    # ========================================================
-    # REMINDER
-    # ========================================================
-
     reminder_command = (
         detect_reminder_command(
             message
@@ -744,9 +635,6 @@ def detect_command(
     if reminder_command is not None:
         return reminder_command
 
-    # ========================================================
-    # MEETING
-    # ========================================================
 
     meeting_command = (
         detect_meeting_command(
@@ -757,10 +645,7 @@ def detect_command(
     if meeting_command is not None:
         return meeting_command
 
-    # ========================================================
-    # TASK
-    # ========================================================
-
+ 
     task_command = (
         detect_task_command(
             message
@@ -770,18 +655,12 @@ def detect_command(
     if task_command is not None:
         return task_command
 
-    # ========================================================
-    # NO COMMAND
-    # ========================================================
-
+  
     return {
         "intent": COMMAND_NONE
     }
 
 
-# ============================================================
-# TEST
-# ============================================================
 
 if __name__ == "__main__":
 

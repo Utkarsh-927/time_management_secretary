@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: management_model_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: management_model
+      POSTGRES_USER: management_user
+      POSTGRES_PASSWORD: management_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - management_model_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U management_user -d management_model"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  management_model_postgres_data:

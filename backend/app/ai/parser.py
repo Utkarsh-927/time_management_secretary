@@ -1,382 +1,356 @@
+from __future__ import annotations
+
 import json
+import os
 import re
 import subprocess
-from pathlib import Path
-from typing import Any
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
 
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
+DEFAULT_LLAMA_CLI = (
+    r"D:\Management_model\llama.cpp\build\bin\Release\llama-cli.exe"
+)
 
-import os
+DEFAULT_MODEL_PATH = (
+    r"D:\Management_model\models\gemma-3-1b-it-q4_0.gguf"
+)
 
+LLAMA_CLI_PATH = os.getenv(
+    "LLAMA_CLI_PATH",
+    DEFAULT_LLAMA_CLI,
+)
 
+GEMMA_MODEL_PATH = os.getenv(
+    "GEMMA_MODEL_PATH",
+    DEFAULT_MODEL_PATH,
+)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+GEMMA_CONTEXT = int(
+    os.getenv("GEMMA_CONTEXT", "2048")
+)
 
+GEMMA_MAX_TOKENS = int(
+    os.getenv("GEMMA_MAX_TOKENS", "256")
+)
 
-LLAMA_CLI = Path(
-    os.getenv(
-        "LLAMA_CLI",
-        str(
-            PROJECT_ROOT
-            / "llama.cpp"
-            / "build"
-            / "bin"
-            / "Release"
-            / "llama-cli.exe"
-        ),
-    )
+GEMMA_TIMEOUT = int(
+    os.getenv("GEMMA_TIMEOUT", "120")
 )
 
 
-MODEL_PATH = Path(
-    os.getenv(
-        "MODEL_PATH",
-        str(
-            PROJECT_ROOT
-            / "models"
-            / "gemma-3-1b-it-q4_0.gguf"
-        ),
-    )
-)
-SCHEMA_PATH = (
-    PROJECT_ROOT
-    / "management_schema.json"
-)
+# ============================================================
+# WORD NUMBERS
+# ============================================================
 
-
-
-CONTEXT_SIZE = "2048"
-MAX_TOKENS = "256"
-TIMEOUT = 120
-
-GPU_DEVICE = "CUDA0"
-GPU_LAYERS = "99"
-
-
-
-SYSTEM_PROMPT = """
-Extract information from the USER MESSAGE.
-
-Return ONLY valid JSON with exactly:
-
-{
-  "tasks": [],
-  "meetings": [],
-  "availability": [],
-  "reminders": []
+_WORD_NUMBERS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
 }
 
-Task:
 
-{
-  "title": string or null,
-  "description": string or null,
-  "deadline": string or null,
-  "estimated_duration": integer or null,
-  "importance": integer or null
-}
-
-Meeting:
-
-{
-  "title": string or null,
-  "description": string or null,
-  "start_time": string or null,
-  "end_time": string or null,
-  "location": string or null,
-  "participants": array or null
-}
-
-Availability:
-
-{
-  "start_date": string or null,
-  "end_date": string or null,
-  "start_time": string or null,
-  "end_time": string or null,
-  "recurrence": "none" or "daily" or "weekly" or null,
-  "weekdays": array or null
-}
-
-Reminder:
-
-{
-  "title": string or null,
-  "message": string or null,
-  "reminder_time": string or null,
-  "reminder_type": string or null
-}
-
-Rules:
-
-- Extract only what the user explicitly says.
-- "2 hours" means 120 minutes.
-- "3 PM" is a time.
-- "tomorrow" is a date.
-- "every day" means daily availability.
-- "every Monday, Wednesday and Friday" means weekly availability.
-- Do not explain anything.
-- Do not return markdown.
-- Do not return code fences.
-- "next Monday" means the following Monday.
-- "this Friday" means Friday in the current week.
-- "tomorrow morning" means tomorrow at 09:00 AM.
-- "tomorrow afternoon" means tomorrow at 02:00 PM.
-- "tomorrow evening" means tomorrow at 06:00 PM.
-- "tonight" means today at 08:00 PM.
-- "this evening" means today at 06:00 PM.
-"""
-
-
-
-def check_files() -> None:
+def _parse_number_token(value: str) -> Optional[int]:
     """
-    Validate the model file and, when configured, the llama.cpp CLI.
-
-    Local Windows development can continue to use llama-cli.exe.
-    Linux deployment can omit LLAMA_CLI and use llama-cpp-python.
+    Convert either a numeric string or a simple English number
+    into an integer.
     """
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"Gemma model not found:\n{MODEL_PATH}"
-        )
+    value = value.strip().lower()
 
-    if os.getenv("LLAMA_CLI") and not LLAMA_CLI.exists():
-        raise FileNotFoundError(
-            f"Configured llama CLI not found:\n{LLAMA_CLI}"
-        )
-
-
-def build_prompt(message: str) -> str:
-    return (
-        SYSTEM_PROMPT
-        + "\nUSER MESSAGE:\n"
-        + message.strip()
-        + "\n\nJSON:"
-    )
-
-
-
-def extract_json(output: str) -> dict:
-    output = output.strip()
-
-    if not output:
-        raise RuntimeError(
-            "Gemma returned an empty response."
-        )
-
-    
-    output = re.sub(
-        r"```json",
-        "",
-        output,
-        flags=re.IGNORECASE,
-    )
-
-    output = re.sub(
-        r"```",
-        "",
-        output,
-    )
-
-    output = output.strip()
-
-   
-    start = output.find("{")
-
-    if start == -1:
-        raise ValueError(
-            "No JSON object found in Gemma output."
-        )
-
-    decoder = json.JSONDecoder()
-
-    try:
-        data, _ = decoder.raw_decode(
-            output[start:]
-        )
-
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            f"Invalid JSON returned by Gemma: {error}"
-        ) from error
-
-    if not isinstance(data, dict):
-        raise ValueError(
-            "Gemma JSON output must be an object."
-        )
-
-    return data
-
-
-
-def normalize_lists(data: dict) -> dict:
-    fields = [
-        "tasks",
-        "meetings",
-        "availability",
-        "reminders",
-    ]
-
-    for field in fields:
-
-        if field not in data:
-            data[field] = []
-
-        elif data[field] is None:
-            data[field] = []
-
-        elif not isinstance(data[field], list):
-            data[field] = []
-
-    return data
-
-
-
-def normalize_duration(
-    value: Any,
-) -> int | None:
-
-    if value is None:
-        return None
-
-    if isinstance(value, int):
-        return value
-
-    if isinstance(value, float):
+    if value.isdigit():
         return int(value)
 
-    if isinstance(value, str):
-
-        text = value.lower().strip()
-
-        # "2 hours"
-        match = re.search(
-            r"(\d+(?:\.\d+)?)\s*hours?",
-            text,
-        )
-
-        if match:
-            return int(
-                float(match.group(1)) * 60
-            )
-
-        # "30 minutes"
-        match = re.search(
-            r"(\d+)\s*minutes?",
-            text,
-        )
-
-        if match:
-            return int(match.group(1))
-
-        # Plain integer
-        if text.isdigit():
-            return int(text)
-
-    return None
+    return _WORD_NUMBERS.get(value)
 
 
+# ============================================================
+# DURATION
+# ============================================================
 
-def duration_from_message(
-    message: str,
-) -> int | None:
+def extract_duration_minutes(message: str) -> Optional[int]:
+    """
+    Extract duration from natural language.
+
+    Examples:
+        "two hours"      -> 120
+        "one hour"       -> 60
+        "45 minutes"     -> 45
+        "30 seconds"     -> 1
+        "2 days"         -> 2880
+        "one week"       -> 10080
+    """
+    if not message:
+        return None
 
     text = message.lower()
 
-    word_hours = {
-        "one": 1,
-        "two": 2,
-        "three": 3,
-        "four": 4,
-        "five": 5,
-    }
-
-    
-    for word, number in word_hours.items():
-
-        pattern = rf"\b{word}\s+hours?\b"
-
-        if re.search(
-            pattern,
-            text,
-        ):
-            return number * 60
-
-    
-    match = re.search(
-        r"\b(\d+(?:\.\d+)?)\s*hours?\b",
-        text,
+    pattern = re.compile(
+        r"\b("
+        r"\d+(?:\.\d+)?|"
+        r"zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|"
+        r"seventeen|eighteen|nineteen|twenty|thirty|forty|"
+        r"fifty|sixty|seventy|eighty|ninety"
+        r")\s*"
+        r"(seconds?|minutes?|hours?|days?|weeks?)\b",
+        re.IGNORECASE,
     )
 
-    if match:
-        return int(
-            float(match.group(1)) * 60
-        )
+    match = pattern.search(text)
 
-   
-    match = re.search(
-        r"\b(\d+)\s*minutes?\b",
-        text,
-    )
+    if not match:
+        return None
 
-    if match:
-        return int(match.group(1))
+    number = _parse_number_token(match.group(1))
 
-    return None
+    if number is None:
+        try:
+            number = float(match.group(1))
+        except (TypeError, ValueError):
+            return None
+
+    unit = match.group(2).lower()
+
+    if unit.startswith("second"):
+        minutes = number / 60
+    elif unit.startswith("minute"):
+        minutes = number
+    elif unit.startswith("hour"):
+        minutes = number * 60
+    elif unit.startswith("day"):
+        minutes = number * 24 * 60
+    elif unit.startswith("week"):
+        minutes = number * 7 * 24 * 60
+    else:
+        return None
+
+    return max(1, int(round(minutes)))
 
 
+def duration_from_message(message: str) -> Optional[int]:
+    """
+    Backward-compatible wrapper used by tests and other modules.
+    """
+    return extract_duration_minutes(message)
 
-def importance_from_message(
-    message: str,
-) -> int | None:
+
+# ============================================================
+# IMPORTANCE
+# ============================================================
+
+def extract_importance(message: str) -> Optional[str]:
+    """
+    Extract semantic importance level from the user's message.
+
+    Returns:
+        critical
+        high
+        medium
+        low
+        None
+    """
+    if not message:
+        return None
 
     text = message.lower()
 
-    
-    if any(
-        phrase in text
-        for phrase in [
-            "extremely important",
-            "critically important",
-            "critical",
-            "urgent",
-        ]
+    # IMPORTANT:
+    # Check critical before high.
+    if re.search(
+        r"\b("
+        r"critical|"
+        r"extremely important|"
+        r"very urgent|"
+        r"must do immediately|"
+        r"absolute priority"
+        r")\b",
+        text,
     ):
+        return "critical"
+
+    if re.search(
+        r"\b("
+        r"high priority|"
+        r"high-priority|"
+        r"urgent|"
+        r"very important"
+        r")\b",
+        text,
+    ):
+        return "high"
+
+    if re.search(
+        r"\b("
+        r"important|"
+        r"medium priority|"
+        r"normal priority"
+        r")\b",
+        text,
+    ):
+        return "medium"
+
+    if re.search(
+        r"\b("
+        r"low priority|"
+        r"low-priority|"
+        r"not important|"
+        r"minor"
+        r")\b",
+        text,
+    ):
+        return "low"
+
+    return None
+
+
+def importance_from_message(message: str) -> int:
+    """
+    Convert natural-language priority to the integer scale
+    used by the database.
+
+    Scale:
+        1 = low
+        2 = below normal
+        3 = normal
+        4 = important/high
+        5 = critical
+    """
+    importance = extract_importance(message)
+
+    if importance == "critical":
         return 5
 
-    
-    if any(
-        phrase in text
-        for phrase in [
-            "very important",
-            "high priority",
-            "high-priority",
-        ]
-    ):
+    if importance == "high":
         return 4
 
-   
-    if "important" in text:
+    if importance == "medium":
         return 4
 
-   
-    if any(
-        phrase in text
-        for phrase in [
-            "low priority",
-            "low-priority",
-            "not important",
-        ]
-    ):
+    if importance == "low":
         return 1
 
-    return None
+    return 3
 
 
+def _normalize_importance_value(
+    value: Any,
+    original_message: str = "",
+) -> int:
+    """
+    Convert any AI/user importance representation into the integer
+    expected by the ManagementData Pydantic schema.
 
-WEEKDAY_NAMES = {
+    Deterministic extraction from the original user message has
+    priority over Gemma's classification.
+
+    Examples:
+
+        "important" -> 4
+        "high"      -> 4
+        "critical"  -> 5
+        "medium"    -> 3
+        "low"       -> 1
+        4           -> 4
+    """
+
+    # --------------------------------------------------------
+    # FIRST: Trust explicit user wording.
+    # --------------------------------------------------------
+    extracted = extract_importance(original_message)
+
+    if extracted == "critical":
+        return 5
+
+    if extracted == "high":
+        return 4
+
+    if extracted == "medium":
+        return 4
+
+    if extracted == "low":
+        return 1
+
+    # --------------------------------------------------------
+    # SECOND: Normalize Gemma's value.
+    # --------------------------------------------------------
+    if isinstance(value, bool):
+        return 3
+
+    if isinstance(value, int):
+        return max(1, min(5, value))
+
+    if isinstance(value, float):
+        return max(1, min(5, int(value)))
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+
+        mapping = {
+            "very low": 1,
+            "low": 1,
+            "minor": 1,
+
+            "below normal": 2,
+
+            "normal": 3,
+            "medium": 3,
+
+            "important": 4,
+            "high": 4,
+            "high priority": 4,
+
+            "critical": 5,
+            "urgent": 5,
+            "very high": 5,
+        }
+
+        if normalized in mapping:
+            return mapping[normalized]
+
+        try:
+            numeric = int(float(normalized))
+            return max(1, min(5, numeric))
+        except (TypeError, ValueError):
+            pass
+
+    # Safe default
+    return 3
+
+
+# ============================================================
+# DEADLINES
+# ============================================================
+
+_WEEKDAYS = {
     "monday": 0,
     "tuesday": 1,
     "wednesday": 2,
@@ -386,1775 +360,832 @@ WEEKDAY_NAMES = {
     "sunday": 6,
 }
 
-TIME_PERIOD_DEFAULTS = {
-    "morning": "09:00 AM",
-    "afternoon": "02:00 PM",
-    "evening": "06:00 PM",
-    "tonight": "08:00 PM",
-}
 
-
-def get_next_weekday(
-    weekday_name: str,
-):
+def _next_weekday(
+    target_weekday: int,
+    today: Optional[date] = None,
+) -> date:
     """
-    Return the weekday in the following week.
-
-    Examples for Thursday, August 20, 2026:
-
-        next Monday -> 2026-08-24
-        next Friday -> 2026-08-28
-
-    "this Friday" is handled separately by
-    get_this_weekday().
+    Return the next occurrence of a weekday.
     """
+    if today is None:
+        today = date.today()
 
-    from datetime import date, timedelta
+    days_ahead = (target_weekday - today.weekday()) % 7
 
-    weekday_name = (
-        weekday_name
-        .strip()
-        .lower()
-    )
+    if days_ahead == 0:
+        days_ahead = 7
 
-    target_weekday = WEEKDAY_NAMES.get(
-        weekday_name
-    )
+    return today + timedelta(days=days_ahead)
 
-    if target_weekday is None:
-        return None
 
-    today = date.today()
-
-    # Start of the current week (Monday)
-    current_week_start = (
-        today
-        - timedelta(
-            days=today.weekday()
-        )
-    )
-
-    # Start of the following week
-    next_week_start = (
-        current_week_start
-        + timedelta(days=7)
-    )
-
-    return (
-        next_week_start
-        + timedelta(
-            days=target_weekday
-        )
-    )
-
-def get_this_weekday(
-    weekday_name: str,
-):
+def extract_deadline(message: str) -> Optional[date]:
     """
-    Return the closest occurrence of a weekday
-    within the current week.
+    Extract a calendar deadline from natural language.
 
-    Monday is considered the first day
-    of the week.
-    """
-
-    from datetime import date, timedelta
-
-    weekday_name = (
-        weekday_name
-        .strip()
-        .lower()
-    )
-
-    target_weekday = WEEKDAY_NAMES.get(
-        weekday_name
-    )
-
-    if target_weekday is None:
-        return None
-
-    today = date.today()
-
-    current_week_start = (
-        today
-        - timedelta(
-            days=today.weekday()
-        )
-    )
-
-    return (
-        current_week_start
-        + timedelta(
-            days=target_weekday
-        )
-    )
-
-
-def relative_weekday_from_message(
-    message: str,
-):
-    """
-    Detect phrases such as:
-
-        next Monday
+    Examples:
+        tomorrow
+        day after tomorrow
         next Friday
-        this Monday
-        this Friday
-
-    Returns an ISO date string when found.
+        Friday
+        25/09/2026
+        25-09-2026
     """
+    if not message:
+        return None
 
     text = message.lower()
+    today = date.today()
 
-    
-    match = re.search(
-        r"\bnext\s+"
-        r"(monday|tuesday|wednesday|thursday|"
-        r"friday|saturday|sunday)\b",
+    # --------------------------------------------------------
+    # Day after tomorrow
+    # --------------------------------------------------------
+    if re.search(
+        r"\bday\s+after\s+tomorrow\b",
         text,
-        re.IGNORECASE,
+    ):
+        return today + timedelta(days=2)
+
+    # --------------------------------------------------------
+    # Tomorrow
+    # --------------------------------------------------------
+    if re.search(
+        r"\btomorrow\b",
+        text,
+    ):
+        return today + timedelta(days=1)
+
+    # --------------------------------------------------------
+    # Today
+    # --------------------------------------------------------
+    if re.search(
+        r"\btoday\b",
+        text,
+    ):
+        return today
+
+    # --------------------------------------------------------
+    # Explicit numeric date
+    # --------------------------------------------------------
+    match = re.search(
+        r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b",
+        text,
     )
 
     if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        year = int(match.group(3))
 
-        target = get_next_weekday(
-            match.group(1)
-        )
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
 
-        if target is not None:
-            return target.isoformat()
+    # --------------------------------------------------------
+    # "next week"
+    # --------------------------------------------------------
+    if re.search(r"\bnext\s+week\b", text):
+        return today + timedelta(days=7)
 
-    
-    match = re.search(
-        r"\bthis\s+"
-        r"(monday|tuesday|wednesday|thursday|"
-        r"friday|saturday|sunday)\b",
-        text,
-        re.IGNORECASE,
-    )
-
-    if match:
-
-        target = get_this_weekday(
-            match.group(1)
-        )
-
-        if target is not None:
-            return target.isoformat()
+    # --------------------------------------------------------
+    # Weekday
+    # --------------------------------------------------------
+    for weekday_name, weekday_number in _WEEKDAYS.items():
+        if re.search(
+            rf"\b(?:next\s+)?{weekday_name}\b",
+            text,
+        ):
+            return _next_weekday(
+                weekday_number,
+                today,
+            )
 
     return None
 
 
-def time_period_from_message(
-    message: str,
-):
+def deadline_from_message(message: str) -> Optional[str]:
     """
-    Detect natural-language time periods.
+    Backward-compatible deadline wrapper used by tests.
 
     Examples:
 
-        tomorrow morning
-        tomorrow afternoon
-        tomorrow evening
-        tonight
-        this evening
-    """
-
-    text = message.lower()
-
-   
-    if re.search(
-        r"\btonight\b",
-        text,
-        re.IGNORECASE,
-    ):
-        return {
-            "period": "tonight",
-            "time": TIME_PERIOD_DEFAULTS["tonight"],
-        }
-
-    
-    for period in [
-        "morning",
-        "afternoon",
-        "evening",
-    ]:
-
-        if re.search(
-            rf"\b{period}\b",
-            text,
-            re.IGNORECASE,
-        ):
-            return {
-                "period": period,
-                "time": TIME_PERIOD_DEFAULTS[period],
-            }
-
-    return None
-
-
-
-def relative_datetime_from_message(
-    message: str,
-):
-    """
-    Resolve phrases such as:
-
-        tomorrow morning
-        tomorrow afternoon
-        tomorrow evening
-        tonight
-        this evening
-    """
-
-    from datetime import date, timedelta
-
-    text = message.lower()
-
-    period_data = time_period_from_message(
-        message
-    )
-
-    if period_data is None:
-        return None
-
-    
-    target_date = None
-
-    if "tomorrow" in text:
-
-        target_date = (
-            date.today()
-            + timedelta(days=1)
-        )
-
-    elif "today" in text:
-
-        target_date = date.today()
-
-    elif "tonight" in text:
-
-        target_date = date.today()
-
-    else:
-
-        relative_weekday = (
-            relative_weekday_from_message(
-                message
-            )
-        )
-
-        if relative_weekday is not None:
-            target_date = date.fromisoformat(
-                relative_weekday
-            )
-
-    if target_date is None:
-        return None
-
-    return (
-        f"{target_date.isoformat()} "
-        f"{period_data['time']}"
-    )
-
-
-def deadline_from_message(
-    message: str,
-) -> str | None:
-    """
-    Determine an explicitly mentioned task deadline.
-
-    Supports:
-
-        today
         tomorrow
-        yesterday
-        next Monday
-        next Friday
-        this Monday
-        this Friday
-        tomorrow morning
-        tomorrow afternoon
-        tomorrow evening
-        tonight
-        this evening
+        tomorrow morning — 09:00 AM
+        tomorrow afternoon — 01:00 PM
+        tomorrow evening — 06:00 PM
+        tomorrow night — 09:00 PM
+        day after tomorrow
+        2026-09-25
     """
+    if not message:
+        return None
 
     text = message.lower()
 
-   
-    relative_datetime = (
-        relative_datetime_from_message(
-            message
-        )
-    )
+    if re.search(
+        r"\bday\s+after\s+tomorrow\b",
+        text,
+    ):
+        return "day after tomorrow"
 
-    if relative_datetime is not None:
-        return relative_datetime
+    if re.search(
+        r"\btomorrow\s+morning\b",
+        text,
+    ):
+        return "tomorrow morning — 09:00 AM"
 
-    
-    relative_weekday = (
-        relative_weekday_from_message(
-            message
-        )
-    )
+    if re.search(
+        r"\btomorrow\s+afternoon\b",
+        text,
+    ):
+        return "tomorrow afternoon — 01:00 PM"
 
-    if relative_weekday is not None:
-        return relative_weekday
+    if re.search(
+        r"\btomorrow\s+evening\b",
+        text,
+    ):
+        return "tomorrow evening — 06:00 PM"
 
-   
-    if "tomorrow" in text:
+    if re.search(
+        r"\btomorrow\s+night\b",
+        text,
+    ):
+        return "tomorrow night — 09:00 PM"
+
+    if re.search(
+        r"\btomorrow\b",
+        text,
+    ):
         return "tomorrow"
 
-    if "today" in text:
+    if re.search(
+        r"\btoday\b",
+        text,
+    ):
         return "today"
 
-    if "yesterday" in text:
-        return "yesterday"
+    deadline = extract_deadline(message)
 
-    return None
+    if deadline is None:
+        return None
+
+    return deadline.isoformat()
 
 
-def task_title_from_message(
+# ============================================================
+# TASK FALLBACK
+# ============================================================
+
+def _deadline_phrase_pattern() -> str:
+    """
+    Regex fragment used to identify the end of a task title.
+    Longer phrases must come first.
+    """
+    weekdays = "|".join(_WEEKDAYS.keys())
+
+    return (
+        r"(?:"
+        r"day\s+after\s+tomorrow|"
+        r"tomorrow|"
+        r"today|"
+        rf"next\s+(?:{weekdays})|"
+        rf"(?:{weekdays})"
+        r")"
+    )
+
+
+def extract_task_fallback(
     message: str,
-) -> str | None:
+) -> Optional[dict[str, Any]]:
     """
-    Extract a task title from natural language.
+    Deterministically create a task when Gemma fails to produce
+    a useful task object.
 
-    Examples:
-        finish my AI assignment next Monday
-        I need an E2E AI Python assignment tomorrow
-        I need to finish my Python assignment tomorrow
-        complete Python project tomorrow
-        study machine learning today
+    Supports examples such as:
 
-    Date/time and supporting clauses are removed from the title.
+        I need an E2E AI Python assignment tomorrow.
+        I need to finish my Python assignment tomorrow.
+        I have to complete the report by Friday.
+        Finish the ML project by Friday.
     """
+    if not message:
+        return None
 
     text = message.strip()
 
-   
-    # Common temporal/supporting phrases that should never become
-    # part of the task title.
-    
-    stop_phrase = (
-        r"(?=\s+(?:"
-        r"today|tomorrow|yesterday|"
-        r"this\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
-        r"next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
-        r"on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
-        r"by\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
-        r"due\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
-        r"it\s+will\s+take\b|"
-        r"it\s+takes\b|"
-        r"and\s+(?:it\s+is|it's)\b"
-        r")"
-        r"|[.!?]|$)"
+    deadline_fragment = _deadline_phrase_pattern()
+
+    # --------------------------------------------------------
+    # Pattern 1:
+    #
+    # I need an X tomorrow.
+    # I need a X tomorrow.
+    # I need the X tomorrow.
+    # --------------------------------------------------------
+    pattern = re.compile(
+        rf"\bI\s+need\s+"
+        rf"(?:a|an|the)\s+"
+        rf"(.+?)"
+        rf"\s+(?:{deadline_fragment})"
+        rf"(?:\s*[.!?]|$)",
+        re.IGNORECASE,
     )
 
-    patterns = [
-        # "I need an E2E AI Python assignment tomorrow"
-        r"\b(?:i\s+)?need\s+"
-        r"(?:a|an|the|my)\s+"
-        r"(.+?)"
-        + stop_phrase,
+    match = pattern.search(text)
 
-        # "I have an E2E AI Python assignment tomorrow"
-        r"\b(?:i\s+)?have\s+"
-        r"(?:a|an|the|my)\s+"
-        r"(.+?)"
-        + stop_phrase,
-
-        # "I want an E2E AI Python assignment tomorrow"
-        r"\b(?:i\s+)?want\s+"
-        r"(?:a|an|the|my)\s+"
-        r"(.+?)"
-        + stop_phrase,
-
-        # "I need to finish my E2E AI Python assignment tomorrow"
-        r"\b(?:i\s+)?(?:need|have|want|plan|intend)\s+to\s+"
-        r"(?:finish|complete|do|work\s+on|study|prepare|submit)\s+"
-        r"(?:my|the|a|an)?\s*"
-        r"(.+?)"
-        + stop_phrase,
-
-        # "finish my AI assignment next Monday"
-        r"\b(?:finish|complete|do|work\s+on|study|prepare|submit)\s+"
-        r"(?:my|the|a|an)?\s*"
-        r"(.+?)"
-        + stop_phrase,
-
-        # "assignment: AI assignment"
-        r"(?:assignment|project|task)"
-        r"\s*[:\-]\s*"
-        r"(.+?)"
-        r"(?:[.!?]|$)",
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE,
-        )
-
-        if not match:
-            continue
-
+    if match:
         title = match.group(1).strip()
 
-        
-        # Remove common filler
-      
-        title = re.sub(
-            r"^(?:called|named)\s+",
-            "",
-            title,
-            flags=re.IGNORECASE,
-        )
+        deadline = extract_deadline(text)
 
-        title = re.sub(
-            r"\s+it\s+will\s+take.*$",
-            "",
-            title,
-            flags=re.IGNORECASE,
-        )
-
-        title = re.sub(
-            r"\s+it\s+takes.*$",
-            "",
-            title,
-            flags=re.IGNORECASE,
-        )
-
-        title = re.sub(
-            r"\s+and\s+(?:it\s+is|it's)\s+.*$",
-            "",
-            title,
-            flags=re.IGNORECASE,
-        )
-
-        title = title.rstrip(".,!? ").strip()
-
-       
-        # Reject temporal/filler-only titles.
-        
-        invalid_titles = {
-            "today",
-            "tomorrow",
-            "yesterday",
-            "morning",
-            "afternoon",
-            "evening",
-            "tonight",
-            "important",
-            "very important",
-            "high priority",
-            "critical",
-            "urgent",
+        task: dict[str, Any] = {
+            "title": title,
+            "description": text,
         }
 
-        if title.lower() in invalid_titles:
-            continue
+        if deadline:
+            task["deadline"] = deadline.isoformat()
 
-        if title:
-            return title
+        duration = extract_duration_minutes(text)
+
+        if duration is not None:
+            task["estimated_duration"] = duration
+
+        task["importance"] = _normalize_importance_value(
+            None,
+            text,
+        )
+
+        return task
+
+    # --------------------------------------------------------
+    # Pattern 2:
+    #
+    # I need to finish X tomorrow.
+    # I have to finish X by Friday.
+    # --------------------------------------------------------
+    pattern = re.compile(
+        rf"\b(?:I\s+need\s+to|"
+        rf"I\s+have\s+to|"
+        rf"I\s+must)\s+"
+        rf"(.+?)"
+        rf"\s+(?:{deadline_fragment})"
+        rf"(?:\s*[.!?]|$)",
+        re.IGNORECASE,
+    )
+
+    match = pattern.search(text)
+
+    if match:
+        title = match.group(1).strip()
+
+        deadline = extract_deadline(text)
+
+        task = {
+            "title": title,
+            "description": text,
+        }
+
+        if deadline:
+            task["deadline"] = deadline.isoformat()
+
+        duration = extract_duration_minutes(text)
+
+        if duration is not None:
+            task["estimated_duration"] = duration
+
+        task["importance"] = _normalize_importance_value(
+            None,
+            text,
+        )
+
+        return task
+
+    # --------------------------------------------------------
+    # Pattern 3:
+    #
+    # Finish the project by Friday.
+    # Complete my assignment tomorrow.
+    # Do the report today.
+    # --------------------------------------------------------
+    pattern = re.compile(
+        rf"\b("
+        rf"finish|complete|do|submit|prepare|review|work\s+on|"
+        rf"study|learn|create|build|write"
+        rf")\s+"
+        rf"(.+?)"
+        rf"\s+(?:{deadline_fragment})"
+        rf"(?:\s*[.!?]|$)",
+        re.IGNORECASE,
+    )
+
+    match = pattern.search(text)
+
+    if match:
+        action = match.group(1).strip()
+        subject = match.group(2).strip()
+
+        title = f"{action} {subject}".strip()
+
+        deadline = extract_deadline(text)
+
+        task = {
+            "title": title,
+            "description": text,
+        }
+
+        if deadline:
+            task["deadline"] = deadline.isoformat()
+
+        duration = extract_duration_minutes(text)
+
+        if duration is not None:
+            task["estimated_duration"] = duration
+
+        task["importance"] = _normalize_importance_value(
+            None,
+            text,
+        )
+
+        return task
 
     return None
 
 
+# ============================================================
+# TASK NORMALIZATION
+# ============================================================
 
-def clean_tasks(
-    data: dict,
+def _normalize_task_fields(
+    task: dict[str, Any],
     original_message: str,
-) -> dict:
+) -> dict[str, Any]:
+    """
+    Normalize a single task.
 
-    cleaned = []
+    The original user message is the source of truth for
+    deterministic fields such as duration, importance, and
+    deadline.
+    """
+    normalized = dict(task)
 
-    original_duration = (
-        duration_from_message(
-            original_message
-        )
+    # --------------------------------------------------------
+    # TITLE
+    # --------------------------------------------------------
+    title = normalized.get("title")
+
+    if title:
+        normalized["title"] = str(title).strip()
+
+    # --------------------------------------------------------
+    # DESCRIPTION
+    # --------------------------------------------------------
+    description = normalized.get("description")
+
+    if not description:
+        normalized["description"] = original_message.strip()
+
+    # --------------------------------------------------------
+    # DURATION
+    # --------------------------------------------------------
+    message_duration = extract_duration_minutes(
+        original_message
     )
 
-    original_importance = (
-        importance_from_message(
-            original_message
-        )
-    )
-
-    original_deadline = (
-        deadline_from_message(
-            original_message
-        )
-    )
-
-    for task in data["tasks"]:
-
-        if not isinstance(
-            task,
-            dict,
-        ):
-            continue
-
-        duration = normalize_duration(
-            task.get(
-                "estimated_duration"
-            )
+    if message_duration is not None:
+        normalized["estimated_duration"] = message_duration
+    else:
+        raw_duration = normalized.get(
+            "estimated_duration"
         )
 
-        if original_duration is not None:
-            duration = original_duration
-
-        importance = task.get(
-            "importance"
-        )
-
-        if not isinstance(
-            importance,
-            int,
-        ):
-            importance = None
-
-        if not (
-            importance is None
-            or 1 <= importance <= 5
-        ):
-            importance = None
-
-        if original_importance is not None:
-            importance = original_importance
-
-        deadline = task.get(
-            "deadline"
-        )
-
-        if original_deadline is not None:
-            deadline = original_deadline
-
-        ai_title = task.get("title")
-
-        # Reject temporal-only AI titles; deterministic correction later
-        # will recover the real title from the user message.
-        if isinstance(ai_title, str):
-            if ai_title.strip().lower() in {
-                "today",
-                "tomorrow",
-                "yesterday",
-                "morning",
-                "afternoon",
-                "evening",
-                "tonight",
-            }:
-                ai_title = None
-
-        cleaned.append(
-            {
-                "title": ai_title,
-                "description": task.get(
-                    "description"
-                ),
-                "deadline": deadline,
-                "estimated_duration": duration,
-                "importance": importance,
-            }
-        )
-
-    data["tasks"] = cleaned
-
-    return data
-
-
-
-def fix_task_from_message(
-    data: dict,
-    message: str,
-) -> dict:
-
-    title = task_title_from_message(
-        message
-    )
-
-    duration = duration_from_message(
-        message
-    )
-
-    importance = importance_from_message(
-        message
-    )
-
-    deadline = deadline_from_message(
-        message
-    )
-
-    # If the original message contains a valid deterministic task title,
-    # use it even when Gemma returned a bad title such as "tomorrow".
-    if not title:
-        return data
-
-   
-    for task in data["tasks"]:
-
-        if not isinstance(
-            task,
-            dict,
-        ):
-            continue
-
-        existing_title = task.get(
-            "title"
-        )
-
-        # Replace obviously invalid AI titles with the deterministic
-        # title recovered from the original user message.
-        invalid_ai_title = (
-            not existing_title
-            or str(existing_title).strip().lower()
-            in {
-                "today",
-                "tomorrow",
-                "yesterday",
-                "morning",
-                "afternoon",
-                "evening",
-                "tonight",
-            }
-        )
-
-        if invalid_ai_title:
-            task["title"] = title
-            existing_title = title
-
-        existing_text = (
-            str(existing_title)
-            .lower()
-        )
-
-        title_text = title.lower()
-
-        if (
-            title_text in existing_text
-            or existing_text in title_text
-        ):
-
-            if duration is not None:
-                task[
-                    "estimated_duration"
-                ] = duration
-
-            if importance is not None:
-                task["importance"] = (
-                    importance
+        if raw_duration is not None:
+            try:
+                normalized["estimated_duration"] = int(
+                    raw_duration
+                )
+            except (TypeError, ValueError):
+                normalized.pop(
+                    "estimated_duration",
+                    None,
                 )
 
-            if deadline is not None:
-                task["deadline"] = deadline
-
-            return data
-
-   
-    data["tasks"].append(
-        {
-            "title": title,
-            "description": None,
-            "deadline": deadline,
-            "estimated_duration": duration,
-            "importance": importance,
-        }
+    # --------------------------------------------------------
+    # IMPORTANCE
+    # --------------------------------------------------------
+    #
+    # THIS IS THE IMPORTANT FIX.
+    #
+    # Gemma can return:
+    #
+    #     "importance": "medium"
+    #
+    # but ManagementData requires:
+    #
+    #     importance: int
+    #
+    # We convert it BEFORE Pydantic validation.
+    #
+    normalized["importance"] = _normalize_importance_value(
+        normalized.get("importance"),
+        original_message,
     )
 
-    return data
+    # --------------------------------------------------------
+    # DEADLINE
+    # --------------------------------------------------------
+    message_deadline = extract_deadline(
+        original_message
+    )
 
-
-
-def clean_meetings(
-    data: dict,
-) -> dict:
-    cleaned = []
-
-    for meeting in data["meetings"]:
-
-        if not isinstance(
-            meeting,
-            dict,
-        ):
-            continue
-
-        start_time = meeting.get(
-            "start_time"
+    if message_deadline is not None:
+        normalized["deadline"] = (
+            message_deadline.isoformat()
         )
+    else:
+        raw_deadline = normalized.get("deadline")
 
-        end_time = meeting.get(
-            "end_time"
-        )
+        if isinstance(raw_deadline, date):
+            normalized["deadline"] = raw_deadline.isoformat()
 
-        
-        if not start_time or not end_time:
-            continue
-
-       
-        if (
-            isinstance(start_time, str)
-            and re.fullmatch(
-                r"\d{3,4}",
-                start_time.strip(),
+        elif raw_deadline is not None:
+            normalized["deadline"] = str(
+                raw_deadline
             )
-        ):
+
+    return normalized
+
+
+# ============================================================
+# MANAGEMENT DATA POST-PROCESSING
+# ============================================================
+
+def postprocess_management_data(
+    data: dict[str, Any],
+    original_message: str,
+) -> dict[str, Any]:
+    """
+    Normalize Gemma's output into the structure expected by
+    ManagementData.
+
+    This function runs BEFORE Pydantic validation.
+    """
+    if not isinstance(data, dict):
+        data = {}
+
+    result = dict(data)
+
+    # --------------------------------------------------------
+    # Ensure all expected collections exist.
+    # --------------------------------------------------------
+    for key in (
+        "tasks",
+        "meetings",
+        "availability",
+        "reminders",
+        "rules",
+    ):
+        value = result.get(key)
+
+        if not isinstance(value, list):
+            result[key] = []
+
+    # --------------------------------------------------------
+    # Normalize tasks.
+    # --------------------------------------------------------
+    normalized_tasks: list[dict[str, Any]] = []
+
+    for task in result["tasks"]:
+        if not isinstance(task, dict):
             continue
 
-        if (
-            isinstance(end_time, str)
-            and re.fullmatch(
-                r"\d{3,4}",
-                end_time.strip(),
-            )
-        ):
-            continue
-
-        participants = meeting.get(
-            "participants"
+        normalized_task = _normalize_task_fields(
+            task,
+            original_message,
         )
 
-        if participants is not None:
+        normalized_tasks.append(
+            normalized_task
+        )
 
-            if not isinstance(
-                participants,
-                list,
-            ):
-                participants = []
+    result["tasks"] = normalized_tasks
 
-            participants = [
-                str(person).strip()
-                for person in participants
-                if str(person).strip()
+    # --------------------------------------------------------
+    # Deterministic fallback if Gemma produced no task.
+    # --------------------------------------------------------
+    if not result["tasks"]:
+        fallback_task = extract_task_fallback(
+            original_message
+        )
+
+        if fallback_task:
+            result["tasks"] = [
+                _normalize_task_fields(
+                    fallback_task,
+                    original_message,
+                )
             ]
 
-        cleaned.append(
-            {
-                "title": (
-                    meeting.get(
-                        "title"
-                    )
-                    or "Meeting"
-                ),
-
-                "description": (
-                    meeting.get(
-                        "description"
-                    )
-                ),
-
-                "start_time": (
-                    start_time
-                ),
-
-                "end_time": (
-                    end_time
-                ),
-
-                "location": (
-                    meeting.get(
-                        "location"
-                    )
-                ),
-
-                "participants": (
-                    participants
-                ),
-            }
-        )
-
-    data["meetings"] = cleaned
-
-    return data
+    return result
 
 
+# ============================================================
+# JSON EXTRACTION
+# ============================================================
 
-def clean_availability(
-    data: dict,
-) -> dict:
-
-    cleaned = []
-
-    valid_recurrence = {
-        "none",
-        "daily",
-        "weekly",
-    }
-
-    valid_weekdays = {
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-    }
-
-    for availability in data[
-        "availability"
-    ]:
-
-        if not isinstance(
-            availability,
-            dict,
-        ):
-            continue
-
-        recurrence = availability.get(
-            "recurrence"
-        )
-
-        if recurrence not in valid_recurrence:
-            recurrence = None
-
-        weekdays = availability.get(
-            "weekdays"
-        )
-
-        if weekdays is not None:
-
-            if not isinstance(
-                weekdays,
-                list,
-            ):
-                weekdays = []
-
-            cleaned_weekdays = []
-
-            for day in weekdays:
-
-                if not isinstance(
-                    day,
-                    str,
-                ):
-                    continue
-
-                day = day.strip()
-
-                # Normalize capitalization
-                day = day.capitalize()
-
-                if day in valid_weekdays:
-                    cleaned_weekdays.append(
-                        day
-                    )
-
-            weekdays = cleaned_weekdays
-
-        cleaned.append(
-            {
-                "start_date": availability.get(
-                    "start_date"
-                ),
-                "end_date": availability.get(
-                    "end_date"
-                ),
-                "start_time": availability.get(
-                    "start_time"
-                ),
-                "end_time": availability.get(
-                    "end_time"
-                ),
-                "recurrence": recurrence,
-                "weekdays": weekdays,
-            }
-        )
-
-    data["availability"] = cleaned
-
-    return data
-
-
-
-def normalize_time(
-    value: str,
-) -> str:
-
-    if value is None:
-        return value
-
-    value = value.strip().upper()
-
-    
-    match = re.match(
-        r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)",
-        value,
-    )
-
-    if match:
-
-        hour = int(
-            match.group(1)
-        )
-
-        minute = (
-            match.group(2)
-            if match.group(2)
-            else "00"
-        )
-
-        period = match.group(3)
-
-        return (
-            f"{hour}:{minute} {period}"
-        )
-
-    return value
-
-
-
-def fix_meeting_from_message(
-    data: dict,
-    message: str,
-) -> dict:
+def _extract_balanced_json(
+    text: str,
+) -> Optional[str]:
     """
-    Deterministically extract meeting date/time
-    from each meeting phrase.
-
-    Supports:
-
-        meeting tomorrow from 3 PM to 4 PM
-        meeting next Monday from 3 PM to 4 PM
-        meeting this Friday from 10 AM to 11 AM
+    Extract the first balanced JSON object from arbitrary
+    llama.cpp output.
     """
-
-   
-    meeting_pattern = re.compile(
-        r"(?:"
-        r"(?:I\s+have|I\s+have\s+a|"
-        r"there\s+is|schedule|"
-        r"set\s+up|book)\s+)?"
-        r"(?:a\s+)?"
-        r"meeting"
-        r"(?:\s+(?P<date_phrase>"
-        r"tomorrow|today|yesterday|"
-        r"next\s+(?:monday|tuesday|wednesday|"
-        r"thursday|friday|saturday|sunday)|"
-        r"this\s+(?:monday|tuesday|wednesday|"
-        r"thursday|friday|saturday|sunday)"
-        r"))?"
-        r"\s+from\s+"
-        r"(?P<start>"
-        r"\d{1,2}(?::\d{2})?\s*(?:am|pm)"
-        r")"
-        r"\s+to\s+"
-        r"(?P<end>"
-        r"\d{1,2}(?::\d{2})?\s*(?:am|pm)"
-        r")",
-        re.IGNORECASE,
-    )
-
-    matches = list(
-        meeting_pattern.finditer(
-            message
-        )
-    )
-
-    if not matches:
-        return data
-
-    
-    for index, match in enumerate(
-        matches
-    ):
-
-        date_phrase = (
-            match.group("date_phrase")
-        )
-
-        start_time = normalize_time(
-            match.group("start")
-        )
-
-        end_time = normalize_time(
-            match.group("end")
-        )
-
-       
-        resolved_date = None
-
-        if date_phrase:
-
-            date_phrase_lower = (
-                date_phrase.lower()
-            )
-
-          
-            if (
-                date_phrase_lower.startswith(
-                    "next "
-                )
-                or date_phrase_lower.startswith(
-                    "this "
-                )
-            ):
-
-                resolved_date = (
-                    relative_weekday_from_message(
-                        date_phrase
-                    )
-                )
-
-           
-            elif date_phrase_lower == "today":
-
-                from datetime import date
-
-                resolved_date = (
-                    date.today().isoformat()
-                )
-
-            elif (
-                date_phrase_lower
-                == "tomorrow"
-            ):
-
-                from datetime import (
-                    date,
-                    timedelta,
-                )
-
-                resolved_date = (
-                    date.today()
-                    + timedelta(days=1)
-                ).isoformat()
-
-            elif (
-                date_phrase_lower
-                == "yesterday"
-            ):
-
-                from datetime import (
-                    date,
-                    timedelta,
-                )
-
-                resolved_date = (
-                    date.today()
-                    - timedelta(days=1)
-                ).isoformat()
-
-        
-        if resolved_date:
-
-            start_datetime = (
-                f"{resolved_date} "
-                f"{start_time}"
-            )
-
-            end_datetime = (
-                f"{resolved_date} "
-                f"{end_time}"
-            )
-
-        else:
-
-            start_datetime = start_time
-            end_datetime = end_time
-
-       
-        meeting = None
-
-        if index < len(data["meetings"]):
-
-            candidate = (
-                data["meetings"][index]
-            )
-
-            if isinstance(
-                candidate,
-                dict,
-            ):
-                meeting = candidate
-
-       
-        if meeting is not None:
-
-            meeting["start_time"] = (
-                start_datetime
-            )
-
-            meeting["end_time"] = (
-                end_datetime
-            )
-
-            if not meeting.get(
-                "title"
-            ):
-                meeting["title"] = (
-                    "Meeting"
-                )
-
-        
-        else:
-
-            data["meetings"].append(
-                {
-                    "title": "Meeting",
-                    "description": None,
-                    "start_time": (
-                        start_datetime
-                    ),
-                    "end_time": (
-                        end_datetime
-                    ),
-                    "location": None,
-                    "participants": None,
-                }
-            )
-
-    return data
-
-
-def weekdays_from_message(
-    message: str,
-):
-    """
-    Extract explicitly mentioned weekdays.
-
-    Supports:
-
-        Monday, Wednesday and Friday
-
-        every Monday Wednesday Friday
-
-        Monday to Friday
-
-        Monday through Friday
-    """
-
-    text = message.lower()
-
-    weekday_order = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-    ]
-
- 
-    if (
-        "monday to friday" in text
-        or "monday through friday" in text
-        or "mon to fri" in text
-    ):
-        return [
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-        ]
-
- 
-    found = []
-
-    for day in weekday_order:
-
-        if day.lower() in text:
-
-            found.append(day)
-
-    if not found:
+    if not text:
         return None
 
-    return found
+    start_index = text.find("{")
 
+    if start_index == -1:
+        return None
 
+    depth = 0
+    in_string = False
+    escaped = False
 
-def fix_availability_from_message(
-    data: dict,
-    message: str,
-) -> dict:
-    """
-    Deterministically extract availability.
+    for index in range(
+        start_index,
+        len(text),
+    ):
+        char = text[index]
 
-    Examples:
-
-        I am free from 5 PM to 9 PM.
-
-        I am free tomorrow from 2 PM to 4 PM.
-
-        I am free every Monday, Wednesday and Friday
-        from 6 PM to 9 PM.
-
-        I am available Monday to Friday
-        from 9 AM to 5 PM.
-    """
-
-    text = message.lower().strip()
-
- 
-    match = re.search(
-        r"(?:free|available)\s+"
-        r"(?:every\s+)?"
-        r"(?:[a-z,\s]+?\s+)?"
-        r"from\s+"
-        r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))"
-        r"\s+to\s+"
-        r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))",
-        text,
-        re.IGNORECASE,
-    )
-
-    if not match:
-        return data
-
-    start_time = normalize_time(
-        match.group(1)
-    )
-
-    end_time = normalize_time(
-        match.group(2)
-    )
-
- 
-    weekdays = weekdays_from_message(
-        message
-    )
-
-
-    is_weekly = bool(
-        weekdays
-    ) or any(
-        phrase in text
-        for phrase in [
-            "every week",
-            "each week",
-            "weekly",
-        ]
-    )
-
- 
-    has_tomorrow = (
-        "tomorrow" in text
-    )
-
-    has_today = (
-        "today" in text
-    )
-
-  
-    if is_weekly:
-
-        availability_data = {
-            "start_date": (
-                "tomorrow"
-                if has_tomorrow
-                else "today"
-                if has_today
-                else None
-            ),
-            "end_date": (
-                "tomorrow"
-                if has_tomorrow
-                else "today"
-                if has_today
-                else None
-            ),
-            "start_time": start_time,
-            "end_time": end_time,
-            "recurrence": "weekly",
-            "weekdays": weekdays,
-        }
-
-        if data["availability"]:
-
-            existing = data[
-                "availability"
-            ][0]
-
-            existing.update(
-                availability_data
-            )
-
-        else:
-
-            data["availability"].append(
-                availability_data
-            )
-
-        return data
-
-   
-    availability_data = {
-        "start_date": (
-            "tomorrow"
-            if has_tomorrow
-            else "today"
-            if has_today
-            else None
-        ),
-        "end_date": (
-            "tomorrow"
-            if has_tomorrow
-            else "today"
-            if has_today
-            else None
-        ),
-        "start_time": start_time,
-        "end_time": end_time,
-        "recurrence": "none",
-        "weekdays": None,
-    }
-
-    if data["availability"]:
-
-        existing = data[
-            "availability"
-        ][0]
-
-        existing.update(
-            availability_data
-        )
-
-    else:
-
-        data["availability"].append(
-            availability_data
-        )
-
-    return data
-
-
-
-def clean_reminders(
-    data: dict,
-) -> dict:
-
-    cleaned = []
-
-    valid_types = {
-        "before_event",
-        "at_time",
-        "after_event",
-    }
-
-    for reminder in data[
-        "reminders"
-    ]:
-
-        if not isinstance(
-            reminder,
-            dict,
-        ):
+        if escaped:
+            escaped = False
             continue
 
-        reminder_type = reminder.get(
-            "reminder_type"
-        )
+        if char == "\\" and in_string:
+            escaped = True
+            continue
 
-        if reminder_type not in valid_types:
-            reminder_type = None
+        if char == '"':
+            in_string = not in_string
+            continue
 
-        cleaned.append(
-            {
-                "title": reminder.get(
-                    "title"
-                ),
-                "message": reminder.get(
-                    "message"
-                ),
-                "reminder_time": reminder.get(
-                    "reminder_time"
-                ),
-                "reminder_type": reminder_type,
-            }
-        )
+        if in_string:
+            continue
 
-    data["reminders"] = cleaned
+        if char == "{":
+            depth += 1
 
-    return data
+        elif char == "}":
+            depth -= 1
+
+            if depth == 0:
+                return text[
+                    start_index:index + 1
+                ]
+
+    return None
 
 
-
-def fix_reminder_from_message(
-    data: dict,
-    message: str,
-) -> dict:
-
-    text = message.lower()
-
-    if "remind me" not in text:
-        return data
-
- 
-    if "before" in text:
-
-        if not data["reminders"]:
-
-            data["reminders"].append(
-                {
-                    "title": "Reminder",
-                    "message": message.strip(),
-                    "reminder_time": None,
-                    "reminder_type": "before_event",
-                }
-            )
-
-        else:
-
-            for reminder in data[
-                "reminders"
-            ]:
-
-                if not isinstance(
-                    reminder,
-                    dict,
-                ):
-                    continue
-
-                reminder[
-                    "reminder_type"
-                ] = "before_event"
-
-                if not reminder.get(
-                    "message"
-                ):
-                    reminder[
-                        "message"
-                    ] = message.strip()
-
-  
-    elif "after" in text:
-
-        for reminder in data[
-            "reminders"
-        ]:
-
-            if isinstance(
-                reminder,
-                dict,
-            ):
-
-                reminder[
-                    "reminder_type"
-                ] = "after_event"
-
-    return data
-
-
-
-def clean_result(
-    data: dict,
-    original_message: str,
-) -> dict:
-
-    data = normalize_lists(
-        data
-    )
-
-    data = clean_tasks(
-        data,
-        original_message,
-    )
-
-    data = clean_meetings(
-        data
-    )
-
-    data = clean_availability(
-        data
-    )
-
-    data = clean_reminders(
-        data
-    )
-
-  
-    data = fix_meeting_from_message(
-        data,
-        original_message,
-    )
-
-    data = fix_availability_from_message(
-        data,
-        original_message,
-    )
-
-    data = fix_task_from_message(
-        data,
-        original_message,
-    )
-
-    data = fix_reminder_from_message(
-        data,
-        original_message,
-    )
-
-    return data
-
-
- 
-def run_gemma(prompt: str) -> str:
+def _extract_json_from_text(
+    text: str,
+) -> Optional[dict[str, Any]]:
     """
-    Run Gemma using the available runtime.
+    Parse JSON from raw Gemma/llama.cpp output.
 
-    Windows/local:
-        existing llama.cpp CLI.
-
-    Linux/Render:
-        llama-cpp-python CPU fallback when LLAMA_CLI is not available.
+    Handles:
+        plain JSON
+        ```json ... ```
+        surrounding llama.cpp logs
     """
+    if not text:
+        return None
 
-    # Existing llama.cpp CLI path.
-    if LLAMA_CLI.exists():
-        command = [
-            str(LLAMA_CLI),
-            "-m",
-            str(MODEL_PATH),
-            "-ngl",
-            GPU_LAYERS,
-            "--device",
-            GPU_DEVICE,
-            "-c",
-            CONTEXT_SIZE,
-            "-n",
-            MAX_TOKENS,
-            "--temp",
-            "0",
-            "--single-turn",
-            "-p",
-            prompt,
-        ]
+    text = text.strip()
 
-        print("\n========== GEMMA REQUEST ==========")
-        print("Runtime: llama.cpp CLI")
-        print(f"Device: {GPU_DEVICE}")
-        print(f"GPU layers: {GPU_LAYERS}")
-        print(f"Context: {CONTEXT_SIZE}")
-        print(f"Max tokens: {MAX_TOKENS}")
-        print(f"Timeout: {TIMEOUT}")
-        print("Conversation mode: SINGLE-TURN")
-        print("JSON grammar: DISABLED")
-        print("===================================\n")
+    # --------------------------------------------------------
+    # Direct JSON
+    # --------------------------------------------------------
+    try:
+        parsed = json.loads(text)
+
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # --------------------------------------------------------
+    # Markdown fenced JSON
+    # --------------------------------------------------------
+    fenced = re.search(
+        r"```(?:json)?\s*(.*?)```",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    if fenced:
+        candidate = fenced.group(1).strip()
 
         try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=TIMEOUT,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise RuntimeError(
-                f"Gemma model timed out after {TIMEOUT} seconds."
-            ) from error
-        except Exception as error:
-            raise RuntimeError(
-                f"Failed to run Gemma CLI: "
-                f"{type(error).__name__}: {error}"
-            ) from error
+            parsed = json.loads(candidate)
 
-        if result.returncode != 0:
-            print("\n========== GEMMA ERROR ==========")
-            print(result.stderr)
-            print("=================================\n")
-            raise RuntimeError(
-                f"Gemma CLI failed:\n{result.stderr}"
-            )
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
 
-        return result.stdout.strip()
+    # --------------------------------------------------------
+    # Balanced JSON object inside llama.cpp logs
+    # --------------------------------------------------------
+    candidate = _extract_balanced_json(text)
 
-    # Linux/CPU fallback.
-    import importlib
+    if candidate:
+        try:
+            parsed = json.loads(candidate)
 
-    try:
-        llama_cpp = importlib.import_module("llama_cpp")
-        Llama = llama_cpp.Llama
-    except ImportError as error:
-        raise RuntimeError(
-            "No supported Gemma runtime is available. "
-            "Local Windows uses LLAMA_CLI; Linux deployment "
-            "requires llama-cpp-python."
-        ) from error
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
 
-    print("\n========== GEMMA REQUEST ==========")
-    print("Runtime: llama-cpp-python")
-    print("Device: CPU")
-    print(f"Context: {CONTEXT_SIZE}")
-    print(f"Max tokens: {MAX_TOKENS}")
-    print(f"Timeout: {TIMEOUT}")
-    print("===================================\n")
+    return None
 
-    try:
-        model = Llama(
-            model_path=str(MODEL_PATH),
-            n_ctx=int(CONTEXT_SIZE),
-            n_gpu_layers=0,
-            verbose=False,
-        )
 
-        response = model(
-            prompt,
-            max_tokens=int(MAX_TOKENS),
-            temperature=0,
-        )
+# ============================================================
+# GEMMA PROMPT
+# ============================================================
 
-        choices = response.get("choices", [])
-        if not choices:
-            raise RuntimeError(
-                "llama-cpp-python returned no choices."
-            )
+def _build_prompt(message: str) -> str:
+    """
+    Build the extraction prompt for Gemma.
+    """
+    return f"""
+You are the AI secretary for a personal management system.
 
-        output = choices[0].get("text", "")
-        if not output.strip():
-            raise RuntimeError(
-                "llama-cpp-python returned an empty response."
-            )
+Your job is to extract actionable management information
+from the user's message.
 
-        return output.strip()
+USER MESSAGE:
 
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to run Gemma with llama-cpp-python: "
-            f"{type(error).__name__}: {error}"
-        ) from error
+{message}
 
+Return ONLY valid JSON.
+
+Do not use:
+- Markdown
+- ```json fences
+- Explanations
+- Comments
+- Extra text
+- llama.cpp instructions
+
+Use exactly this structure:
+
+{{
+  "tasks": [],
+  "meetings": [],
+  "availability": [],
+  "reminders": [],
+  "rules": []
+}}
+
+For tasks use:
+
+{{
+  "title": "task title",
+  "description": "task description",
+  "deadline": "YYYY-MM-DD",
+  "estimated_duration": 60,
+  "importance": 4
+}}
+
+Importance scale:
+1 = low
+2 = below normal
+3 = normal
+4 = important/high
+5 = critical
+
+Important:
+If the user says "important", use importance 4.
+If the user says "high priority", use importance 4.
+If the user says "critical", use importance 5.
+
+Return only JSON.
+""".strip()
+
+
+# ============================================================
+# LLAMA / GEMMA EXECUTION
+# ============================================================
+
+def _run_gemma(
+    prompt: str,
+) -> str:
+    """
+    Run llama.cpp and return its stdout.
+    """
+    command = [
+        LLAMA_CLI_PATH,
+        "-m",
+        GEMMA_MODEL_PATH,
+        "-c",
+        str(GEMMA_CONTEXT),
+        "-n",
+        str(GEMMA_MAX_TOKENS),
+        "-p",
+        "--no-conversation",
+        prompt,
+    ]
+
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=GEMMA_TIMEOUT,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
+
+    # llama.cpp may place useful output in either stream.
+    if stdout.strip():
+        return stdout
+
+    return stderr
+
+
+# ============================================================
+# MAIN PARSER
+# ============================================================
 
 def extract_information(
     message: str,
-) -> dict:
+) -> dict[str, Any]:
+    """
+    Main parser entry point.
 
+    1. Ask Gemma for structured data.
+    2. Parse JSON.
+    3. Normalize deterministic fields.
+    4. Fall back to deterministic task extraction when needed.
+    """
     if not message or not message.strip():
-        raise ValueError(
-            "Message cannot be empty."
-        )
+        return {
+            "tasks": [],
+            "meetings": [],
+            "availability": [],
+            "reminders": [],
+            "rules": [],
+        }
 
-    check_files()
+    raw_response = ""
 
-    prompt = build_prompt(
-        message
-    )
-
-    output = run_gemma(prompt)
-
-
-    print(
-        "\n========== GEMMA RAW OUTPUT =========="
-    )
-
-    print(
-        output
-    )
-
-    print(
-        "=======================================\n"
-    )
-
-  
     try:
-
-        data = extract_json(
-            output
+        prompt = _build_prompt(
+            message.strip()
         )
 
-    except Exception as error:
+        raw_response = _run_gemma(prompt)
 
-        print(
-            "\n========== JSON ERROR =========="
+        parsed = _extract_json_from_text(
+            raw_response
         )
 
-        print(
-            error
-        )
+    except (
+        subprocess.SubprocessError,
+        OSError,
+        TimeoutError,
+    ):
+        parsed = None
 
-        print(
-            "Raw output:"
-        )
+    if not isinstance(parsed, dict):
+        parsed = {
+            "tasks": [],
+            "meetings": [],
+            "availability": [],
+            "reminders": [],
+            "rules": [],
+        }
 
-        print(
-            output
-        )
-
-        print(
-            "================================\n"
-        )
-
-        raise RuntimeError(
-            "Could not parse Gemma output "
-            f"as JSON: {error}"
-        ) from error
-
-  
-    data = clean_result(
-        data,
+    # --------------------------------------------------------
+    # CRITICAL:
+    #
+    # Normalize BEFORE ManagementData/Pydantic validation.
+    # --------------------------------------------------------
+    normalized = postprocess_management_data(
+        parsed,
         message,
     )
 
-  
-    print(
-        "\n========== FINAL PARSED DATA =========="
-    )
-
-    print(
-        json.dumps(
-            data,
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
-
-    print(
-        "=======================================\n"
-    )
-
-    return data
+    return normalized
 
 
+# ============================================================
+# BACKWARD COMPATIBILITY
+# ============================================================
 
-if __name__ == "__main__":
-
-    message = (
-        "I need to finish my AI assignment "
-        "tomorrow morning. "
-        "It will take two hours and it is very important. "
-        "I have a meeting next Friday from 3 PM to 4 PM."
-    )
-
-    try:
-
-        result = extract_information(
-            message
-        )
-
-        print(
-            "\n========== FINAL RESULT =========="
-        )
-
-        print(
-            json.dumps(
-                result,
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
-
-        print(
-            "=================================="
-        )
-
-    except Exception as error:
-
-        print(
-            "\n========== PARSER ERROR =========="
-        )
-
-        print(
-            type(error).__name__
-        )
-
-        print(
-            error
-        )
-
-        print(
-            "=================================="
-        )
+parse_message = extract_information

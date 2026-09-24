@@ -10,9 +10,6 @@ from ..models.meeting import Meeting
 from ..services.planner import create_plan
 
 
-# ============================================================
-# ROUTER
-# ============================================================
 
 router = APIRouter(
     prefix="/planner",
@@ -20,9 +17,6 @@ router = APIRouter(
 )
 
 
-# ============================================================
-# HELPERS
-# ============================================================
 
 def availability_applies_to_date(
     availability,
@@ -51,24 +45,15 @@ def availability_applies_to_date(
         or "none"
     )
 
-    # --------------------------------------------------------
-    # One-time availability
-    # --------------------------------------------------------
-
+    
     if recurrence == "none":
         return True
 
-    # --------------------------------------------------------
-    # Daily availability
-    # --------------------------------------------------------
-
+    
     if recurrence == "daily":
         return True
 
-    # --------------------------------------------------------
-    # Weekly availability
-    # --------------------------------------------------------
-
+    
     if recurrence == "weekly":
 
         weekdays = (
@@ -98,9 +83,6 @@ def availability_applies_to_date(
     return False
 
 
-# ============================================================
-# PLANNER
-# ============================================================
 
 @router.get("/")
 def generate_plan(
@@ -123,17 +105,11 @@ def generate_plan(
         GET /planner/?planning_date=2026-08-21
     """
 
-    # ========================================================
-    # PLANNING DATE
-    # ========================================================
-
+   
     if planning_date is None:
         planning_date = date.today()
 
-    # ========================================================
-    # DAY BOUNDARIES
-    # ========================================================
-
+    
     start_of_day = datetime.combine(
         planning_date,
         time.min
@@ -144,10 +120,7 @@ def generate_plan(
         time.max
     )
 
-    # ========================================================
-    # GET PENDING TASKS
-    # ========================================================
-
+   
     tasks = (
         db.query(Task)
         .filter(
@@ -156,10 +129,7 @@ def generate_plan(
         .all()
     )
 
-    # ========================================================
-    # GET RELEVANT AVAILABILITY
-    # ========================================================
-
+   
     all_availability = (
         db.query(Availability)
         .order_by(
@@ -177,10 +147,7 @@ def generate_plan(
         )
     ]
 
-    # ========================================================
-    # GET RELEVANT MEETINGS
-    # ========================================================
-
+    
     meetings = (
         db.query(Meeting)
         .filter(
@@ -193,20 +160,14 @@ def generate_plan(
         .all()
     )
 
-    # ========================================================
-    # CREATE SMART PLAN
-    # ========================================================
-
+    
     plan = create_plan(
         tasks,
         availability,
         meetings
     )
 
-    # ========================================================
-    # RETURN PLAN
-    # ========================================================
-
+   
     return {
         "planning_date": (
             planning_date.isoformat()

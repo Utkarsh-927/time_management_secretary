@@ -1,16 +1,10 @@
 from datetime import datetime, timedelta
 
 
-# ============================================================
-# CONSTANTS
-# ============================================================
 
 SLOT_INTERVAL_MINUTES = 30
 
 
-# ============================================================
-# HELPERS
-# ============================================================
 
 def daterange(start_date, end_date):
     """
@@ -38,24 +32,15 @@ def is_available_day(
         or "none"
     )
 
-    # -----------------------------------
-    # No recurrence
-    # -----------------------------------
-
+    
     if recurrence == "none":
         return True
 
-    # -----------------------------------
-    # Daily recurrence
-    # -----------------------------------
-
+    
     if recurrence == "daily":
         return True
 
-    # -----------------------------------
-    # Weekly recurrence
-    # -----------------------------------
-
+    
     if recurrence == "weekly":
 
         weekdays = (
@@ -167,9 +152,6 @@ def overlaps(
     )
 
 
-# ============================================================
-# GENERATE AVAILABILITY WINDOWS
-# ============================================================
 
 def generate_availability_windows(
     availability,
@@ -236,9 +218,6 @@ def generate_availability_windows(
     return windows
 
 
-# ============================================================
-# CHECK MEETING CONFLICT
-# ============================================================
 
 def has_meeting_conflict(
     start_time,
@@ -269,9 +248,6 @@ def has_meeting_conflict(
     return False
 
 
-# ============================================================
-# CHECK SCHEDULED TASK CONFLICT
-# ============================================================
 
 def has_scheduled_task_conflict(
     start_time,
@@ -296,9 +272,6 @@ def has_scheduled_task_conflict(
     return False
 
 
-# ============================================================
-# GENERATE TIME SLOTS
-# ============================================================
 
 def generate_time_slots(
     start_time,
@@ -345,10 +318,7 @@ def generate_time_slots(
             current + duration
         )
 
-        # -----------------------------------
-        # MEETING CONFLICT
-        # -----------------------------------
-
+       
         if has_meeting_conflict(
             current,
             slot_end,
@@ -361,10 +331,7 @@ def generate_time_slots(
 
             continue
 
-        # -----------------------------------
-        # EXISTING TASK CONFLICT
-        # -----------------------------------
-
+        
         if has_scheduled_task_conflict(
             current,
             slot_end,
@@ -391,9 +358,6 @@ def generate_time_slots(
     return slots
 
 
-# ============================================================
-# SCORE CANDIDATE SLOT
-# ============================================================
 
 def score_candidate_slot(
     slot,
@@ -438,9 +402,6 @@ def score_candidate_slot(
     )
 
 
-# ============================================================
-# FIND BEST SLOT
-# ============================================================
 
 def find_best_slot(
     task,
@@ -470,10 +431,7 @@ def find_best_slot(
 
     candidates = []
 
-    # ========================================================
-    # SEARCH ALL AVAILABILITY WINDOWS
-    # ========================================================
-
+    
     for availability in availability_list:
 
         windows = (
@@ -492,17 +450,11 @@ def find_best_slot(
                 "end_time"
             ]
 
-            # -----------------------------------------------
-            # NEVER USE A WINDOW COMPLETELY IN THE PAST
-            # -----------------------------------------------
-
+            
             if window_end <= now:
                 continue
 
-            # -----------------------------------------------
-            # CURRENT-TIME CLIPPING
-            # -----------------------------------------------
-
+            
             effective_start = (
                 window_start
             )
@@ -515,10 +467,7 @@ def find_best_slot(
                     )
                 )
 
-            # -----------------------------------------------
-            # DEADLINE
-            # -----------------------------------------------
-
+           
             effective_end = (
                 window_end
             )
@@ -539,20 +488,14 @@ def find_best_slot(
                         deadline
                     )
 
-            # -----------------------------------------------
-            # INVALID WINDOW
-            # -----------------------------------------------
-
+            
             if (
                 effective_start
                 >= effective_end
             ):
                 continue
 
-            # -----------------------------------------------
-            # GENERATE CANDIDATE SLOTS
-            # -----------------------------------------------
-
+            
             slots = generate_time_slots(
                 effective_start,
                 effective_end,
@@ -561,10 +504,7 @@ def find_best_slot(
                 scheduled_slots,
             )
 
-            # -----------------------------------------------
-            # ADD VALID CANDIDATES
-            # -----------------------------------------------
-
+            
             for slot in slots:
 
                 if deadline is not None:
@@ -594,17 +534,11 @@ def find_best_slot(
                     }
                 )
 
-    # ========================================================
-    # NO VALID SLOT
-    # ========================================================
-
+   
     if not candidates:
         return None
 
-    # ========================================================
-    # CHOOSE EARLIEST VALID SLOT
-    # ========================================================
-
+   
     candidates.sort(
         key=lambda item: item["score"]
     )
@@ -612,9 +546,6 @@ def find_best_slot(
     return candidates[0]["slot"]
 
 
-# ============================================================
-# SCHEDULE ONE TASK
-# ============================================================
 
 def schedule_task(
     task,
@@ -671,9 +602,6 @@ def schedule_task(
     }
 
 
-# ============================================================
-# SCHEDULE ALL TASKS
-# ============================================================
 
 def schedule_tasks(
     tasks,
@@ -704,10 +632,7 @@ def schedule_tasks(
 
     schedule = []
 
-    # ========================================================
-    # PROCESS IN PROVIDED ORDER
-    # ========================================================
-
+   
     for task in tasks:
 
         result = schedule_task(
@@ -723,10 +648,7 @@ def schedule_tasks(
                 result
             )
 
-    # ========================================================
-    # RETURN CHRONOLOGICAL ORDER
-    # ========================================================
-
+ 
     schedule.sort(
         key=lambda item:
             item["start_time"]

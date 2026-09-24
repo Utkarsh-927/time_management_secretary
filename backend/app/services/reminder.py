@@ -97,10 +97,7 @@ def process_reminders(
         if reminder_data.get("reminder_type") != "before_event":
             continue
 
-        # --------------------------------------------------
-        # Find the related meeting
-        # --------------------------------------------------
-
+       
         meeting = None
 
         for item in meetings:
@@ -114,10 +111,7 @@ def process_reminders(
         if meeting.start_time is None:
             continue
 
-        # --------------------------------------------------
-        # Extract "30 minutes before" from reminder text
-        # --------------------------------------------------
-
+       
         message = (
             reminder_data.get("message")
             or ""
@@ -138,10 +132,7 @@ def process_reminders(
             match.group(1)
         )
 
-        # --------------------------------------------------
-        # Save reminder
-        # --------------------------------------------------
-
+       
         reminder = save_reminder(
             db=db,
             event_time=meeting.start_time,

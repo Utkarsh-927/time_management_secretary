@@ -14,10 +14,7 @@ def create_plan(tasks, availability, meetings):
     4. Report tasks that could not be scheduled
     """
 
-    # ========================================================
-    # 1. PRIORITIZE TASKS
-    # ========================================================
-
+    
     prioritized = prioritize_tasks(
         tasks
     )
@@ -43,20 +40,14 @@ def create_plan(tasks, availability, meetings):
                 task
             )
 
-    # ========================================================
-    # 2. SCHEDULE TASKS
-    # ========================================================
-
+    
     schedule = schedule_tasks(
         ordered_tasks,
         availability,
         meetings
     )
 
-    # ========================================================
-    # 3. ADD PRIORITY INFORMATION
-    # ========================================================
-
+   
     priority_lookup = {
         item["task_id"]: item
         for item in prioritized
@@ -78,10 +69,7 @@ def create_plan(tasks, availability, meetings):
                 priority["score"]
             )
 
-    # ========================================================
-    # 4. FIND UNSCHEDULED TASKS
-    # ========================================================
-
+   
     scheduled_task_ids = {
         item["task_id"]
         for item in schedule
@@ -103,10 +91,7 @@ def create_plan(tasks, availability, meetings):
         if task is None:
             continue
 
-        # ----------------------------------------------------
-        # Determine a useful reason
-        # ----------------------------------------------------
-
+        
         reason = (
             "No available time slot "
             "before the task deadline."
@@ -147,10 +132,7 @@ def create_plan(tasks, availability, meetings):
             }
         )
 
-    # ========================================================
-    # 5. RETURN COMPLETE PLAN
-    # ========================================================
-
+   
     return {
         "prioritized_tasks": prioritized,
 

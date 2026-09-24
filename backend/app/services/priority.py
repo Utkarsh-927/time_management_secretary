@@ -1,9 +1,6 @@
 from datetime import datetime
 
 
-# ============================================================
-# PRIORITY LABEL
-# ============================================================
 
 def get_priority_label(score: int) -> str:
     """
@@ -23,9 +20,6 @@ def get_priority_label(score: int) -> str:
     return "LOW"
 
 
-# ============================================================
-# DEADLINE SCORE
-# ============================================================
 
 def calculate_deadline_score(deadline):
     """
@@ -40,18 +34,12 @@ def calculate_deadline_score(deadline):
 
     now = datetime.now()
 
-    # --------------------------------------------------------
-    # Calculate remaining time
-    # --------------------------------------------------------
-
+  
     remaining_hours = (
         deadline - now
     ).total_seconds() / 3600
 
-    # --------------------------------------------------------
-    # OVERDUE
-    # --------------------------------------------------------
-
+   
     if remaining_hours < 0:
 
         overdue_hours = abs(
@@ -66,37 +54,22 @@ def calculate_deadline_score(deadline):
 
         return 50
 
-    # --------------------------------------------------------
-    # VERY URGENT
-    # --------------------------------------------------------
-
+   
     if remaining_hours <= 6:
         return 45
 
-    # --------------------------------------------------------
-    # DUE WITHIN 24 HOURS
-    # --------------------------------------------------------
-
+   
     if remaining_hours <= 24:
         return 35
 
-    # --------------------------------------------------------
-    # DUE WITHIN 3 DAYS
-    # --------------------------------------------------------
-
+   
     if remaining_hours <= 72:
         return 25
 
-    # --------------------------------------------------------
-    # FUTURE DEADLINE
-    # --------------------------------------------------------
-
+    
     return 10
 
 
-# ============================================================
-# DURATION SCORE
-# ============================================================
 
 def calculate_duration_score(
     estimated_duration
@@ -119,9 +92,6 @@ def calculate_duration_score(
     return 1
 
 
-# ============================================================
-# CALCULATE PRIORITY
-# ============================================================
 
 def calculate_priority(task):
     """
@@ -139,10 +109,7 @@ def calculate_priority(task):
 
     score = 0
 
-    # ========================================================
-    # 1. IMPORTANCE
-    # ========================================================
-
+   
     if task.importance is not None:
 
         importance = max(
@@ -155,26 +122,17 @@ def calculate_priority(task):
 
         score += importance * 20
 
-    # ========================================================
-    # 2. DEADLINE
-    # ========================================================
-
+   
     score += calculate_deadline_score(
         task.deadline
     )
 
-    # ========================================================
-    # 3. DURATION
-    # ========================================================
-
+   
     score += calculate_duration_score(
         task.estimated_duration
     )
 
-    # ========================================================
-    # 4. PRIORITY LABEL
-    # ========================================================
-
+   
     label = get_priority_label(
         score
     )
@@ -187,9 +145,6 @@ def calculate_priority(task):
     }
 
 
-# ============================================================
-# PRIORITIZE ALL TASKS
-# ============================================================
 
 def prioritize_tasks(tasks):
     """
@@ -225,10 +180,7 @@ def prioritize_tasks(tasks):
             }
         )
 
-    # --------------------------------------------------------
-    # Sort intelligently
-    # --------------------------------------------------------
-
+   
     prioritized.sort(
         key=lambda task: (
             -task["score"],
@@ -244,10 +196,7 @@ def prioritize_tasks(tasks):
         )
     )
 
-    # --------------------------------------------------------
-    # Remove internal sorting fields
-    # --------------------------------------------------------
-
+   
     for task in prioritized:
 
         task.pop(

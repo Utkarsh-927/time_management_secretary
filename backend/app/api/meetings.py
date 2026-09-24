@@ -18,9 +18,6 @@ router = APIRouter(
 )
 
 
-# ==========================================
-# CREATE MEETING
-# ==========================================
 
 @router.post(
     "/",
@@ -54,9 +51,6 @@ def create_meeting(
     return meeting
 
 
-# ==========================================
-# GET ALL MEETINGS
-# ==========================================
 
 @router.get(
     "/",
@@ -74,9 +68,6 @@ def get_meetings(
     return meetings
 
 
-# ==========================================
-# GET SINGLE MEETING
-# ==========================================
 
 @router.get(
     "/{meeting_id}",
@@ -101,9 +92,6 @@ def get_meeting(
     return meeting
 
 
-# ==========================================
-# UPDATE MEETING
-# ==========================================
 
 @router.put(
     "/{meeting_id}",
@@ -157,9 +145,6 @@ def update_meeting(
     return meeting
 
 
-# ==========================================
-# DELETE MEETING
-# ==========================================
 
 @router.delete(
     "/{meeting_id}"
