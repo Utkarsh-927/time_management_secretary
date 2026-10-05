@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 from datetime import date, datetime, timedelta
+import dateparser
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -283,7 +284,36 @@ def extract_secretary_information(message: str) -> dict:
         model_data,
         message,
     )
+        # ---------------------------------------------------------------
+    # 3. Generic personal activity/event extraction
+    # ---------------------------------------------------------------
+    generic_event = _extract_generic_activity_event(
+        raw_text=message,
+        now_date=date.today(),
+    )
 
+    if generic_event:
+        existing_events = combined.get("events", [])
+
+        duplicate = any(
+            isinstance(event, dict)
+            and _clean_name(event.get("title")).lower()
+            == _clean_name(
+                generic_event.get("title")
+            ).lower()
+            and str(
+                event.get("type", "")
+            ).upper()
+            == "ACTIVITY"
+            for event in existing_events
+        )
+
+        if not duplicate:
+            existing_events.append(
+                generic_event
+            )
+
+        combined["events"] = existing_events
     # ---------------------------------------------------------------
     # 4. Final safety check
     # ---------------------------------------------------------------
@@ -1000,6 +1030,158 @@ def _repair_relative_event_time(
 
     return _parse_datetime(value)
 
+def _extract_generic_activity_event(
+    raw_text: str,
+    now_date: date,
+) -> dict | None:
+    """
+    Extract a simple personal activity/event directly from the
+    user's original message.
+
+    Examples:
+
+        "I am going to college tomorrow."
+        -> ACTIVITY / Going to college / tomorrow
+
+        "I have to visit the bank tomorrow."
+        -> ACTIVITY / Visit the bank / tomorrow
+
+        "I am going to the gym on Saturday."
+        -> ACTIVITY / Going to the gym / Saturday
+
+    This is intentionally conservative. It only creates an event
+    when the message contains a clear first-person activity and a
+    recognizable date expression.
+    """
+
+    if not raw_text:
+        return None
+
+    text = raw_text.strip()
+
+    # ---------------------------------------------------------
+    # 1. Detect a relative/date expression
+    # ---------------------------------------------------------
+    date_match = re.search(
+        r"\b("
+        r"today|tomorrow|day after tomorrow|"
+        r"monday|tuesday|wednesday|thursday|"
+        r"friday|saturday|sunday"
+        r")\b",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not date_match:
+        return None
+
+    date_text = date_match.group(1)
+
+    parsed_date = dateparser.parse(
+        date_text,
+        settings={
+            "RELATIVE_BASE": datetime.combine(
+                now_date,
+                datetime.min.time(),
+            ),
+            "PREFER_DATES_FROM": "future",
+            "RETURN_AS_TIMEZONE_AWARE": False,
+        },
+    )
+
+    if not parsed_date:
+        return None
+
+    # ---------------------------------------------------------
+    # 2. Extract activity from first-person statements
+    # ---------------------------------------------------------
+    activity_patterns = [
+        r"\bI\s+am\s+going\s+to\s+(?P<activity>.+?)(?:\s+"
+        r"(?:today|tomorrow|day after tomorrow|"
+        r"monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday))?[.!?]?$",
+
+        r"\bI\s+will\s+(?P<activity>.+?)(?:\s+"
+        r"(?:today|tomorrow|day after tomorrow|"
+        r"monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday))?[.!?]?$",
+
+        r"\bI\s+have\s+to\s+(?P<activity>.+?)(?:\s+"
+        r"(?:today|tomorrow|day after tomorrow|"
+        r"monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday))?[.!?]?$",
+
+        r"\bI\s+need\s+to\s+(?P<activity>.+?)(?:\s+"
+        r"(?:today|tomorrow|day after tomorrow|"
+        r"monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday))?[.!?]?$",
+    ]
+
+    activity = None
+
+    for pattern in activity_patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE,
+        )
+
+        if match:
+            activity = _clean_name(
+                match.group("activity")
+            )
+            break
+
+    if not activity:
+        return None
+
+    # ---------------------------------------------------------
+    # 3. Remove date expression if it remained in the activity
+    # ---------------------------------------------------------
+    activity = re.sub(
+        r"\b(?:today|tomorrow|day after tomorrow|"
+        r"monday|tuesday|wednesday|thursday|friday|"
+        r"saturday|sunday)\b",
+        "",
+        activity,
+        flags=re.IGNORECASE,
+    )
+
+    activity = _clean_name(
+        activity.strip(" .,!?:;")
+    )
+
+    if not activity:
+        return None
+
+    # ---------------------------------------------------------
+    # 4. Build a natural event title
+    # ---------------------------------------------------------
+    title = activity
+
+    if re.search(
+        r"\b(?:going|visiting|attending|meeting|working|studying)\b",
+        title,
+        re.IGNORECASE,
+    ):
+        title = title
+    else:
+        title = f"Going to {title}"
+
+    if title:
+        title = title[0].upper() + title[1:]
+
+    return {
+        "type": "ACTIVITY",
+        "title": title,
+        "description": raw_text.strip(),
+        "event_time": datetime.combine(
+            parsed_date.date(),
+            datetime.min.time(),
+        ),
+        "primary_entity": None,
+        "confidence": 1.0,
+    }
 
 def _set_fact_value(
     fact: Fact,

@@ -8,9 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
+
 
 DEFAULT_LLAMA_CLI = (
     r"D:\Management_model\llama.cpp\build\bin\Release\llama-cli.exe"
@@ -43,9 +41,7 @@ GEMMA_TIMEOUT = int(
 )
 
 
-# ============================================================
-# WORD NUMBERS
-# ============================================================
+
 
 _WORD_NUMBERS = {
     "zero": 0,
@@ -92,9 +88,7 @@ def _parse_number_token(value: str) -> Optional[int]:
     return _WORD_NUMBERS.get(value)
 
 
-# ============================================================
-# DURATION
-# ============================================================
+
 
 def extract_duration_minutes(message: str) -> Optional[int]:
     """
@@ -163,9 +157,6 @@ def duration_from_message(message: str) -> Optional[int]:
     return extract_duration_minutes(message)
 
 
-# ============================================================
-# IMPORTANCE
-# ============================================================
 
 def extract_importance(message: str) -> Optional[str]:
     """
@@ -282,9 +273,7 @@ def _normalize_importance_value(
         4           -> 4
     """
 
-    # --------------------------------------------------------
-    # FIRST: Trust explicit user wording.
-    # --------------------------------------------------------
+    
     extracted = extract_importance(original_message)
 
     if extracted == "critical":
@@ -299,9 +288,7 @@ def _normalize_importance_value(
     if extracted == "low":
         return 1
 
-    # --------------------------------------------------------
-    # SECOND: Normalize Gemma's value.
-    # --------------------------------------------------------
+   
     if isinstance(value, bool):
         return 3
 
@@ -346,9 +333,7 @@ def _normalize_importance_value(
     return 3
 
 
-# ============================================================
-# DEADLINES
-# ============================================================
+
 
 _WEEKDAYS = {
     "monday": 0,
@@ -397,36 +382,32 @@ def extract_deadline(message: str) -> Optional[date]:
     text = message.lower()
     today = date.today()
 
-    # --------------------------------------------------------
+    
     # Day after tomorrow
-    # --------------------------------------------------------
+   
     if re.search(
         r"\bday\s+after\s+tomorrow\b",
         text,
     ):
         return today + timedelta(days=2)
 
-    # --------------------------------------------------------
+   
     # Tomorrow
-    # --------------------------------------------------------
+    
     if re.search(
         r"\btomorrow\b",
         text,
     ):
         return today + timedelta(days=1)
 
-    # --------------------------------------------------------
-    # Today
-    # --------------------------------------------------------
+   
     if re.search(
         r"\btoday\b",
         text,
     ):
         return today
 
-    # --------------------------------------------------------
-    # Explicit numeric date
-    # --------------------------------------------------------
+   
     match = re.search(
         r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b",
         text,
@@ -442,15 +423,10 @@ def extract_deadline(message: str) -> Optional[date]:
         except ValueError:
             return None
 
-    # --------------------------------------------------------
-    # "next week"
-    # --------------------------------------------------------
     if re.search(r"\bnext\s+week\b", text):
         return today + timedelta(days=7)
 
-    # --------------------------------------------------------
-    # Weekday
-    # --------------------------------------------------------
+    
     for weekday_name, weekday_number in _WEEKDAYS.items():
         if re.search(
             rf"\b(?:next\s+)?{weekday_name}\b",
@@ -533,9 +509,7 @@ def deadline_from_message(message: str) -> Optional[str]:
     return deadline.isoformat()
 
 
-# ============================================================
-# TASK FALLBACK
-# ============================================================
+
 
 def _deadline_phrase_pattern() -> str:
     """
@@ -576,13 +550,7 @@ def extract_task_fallback(
 
     deadline_fragment = _deadline_phrase_pattern()
 
-    # --------------------------------------------------------
-    # Pattern 1:
-    #
-    # I need an X tomorrow.
-    # I need a X tomorrow.
-    # I need the X tomorrow.
-    # --------------------------------------------------------
+   
     pattern = re.compile(
         rf"\bI\s+need\s+"
         rf"(?:a|an|the)\s+"
@@ -619,12 +587,7 @@ def extract_task_fallback(
 
         return task
 
-    # --------------------------------------------------------
-    # Pattern 2:
-    #
-    # I need to finish X tomorrow.
-    # I have to finish X by Friday.
-    # --------------------------------------------------------
+  
     pattern = re.compile(
         rf"\b(?:I\s+need\s+to|"
         rf"I\s+have\s+to|"
@@ -662,13 +625,7 @@ def extract_task_fallback(
 
         return task
 
-    # --------------------------------------------------------
-    # Pattern 3:
-    #
-    # Finish the project by Friday.
-    # Complete my assignment tomorrow.
-    # Do the report today.
-    # --------------------------------------------------------
+   
     pattern = re.compile(
         rf"\b("
         rf"finish|complete|do|submit|prepare|review|work\s+on|"
@@ -713,9 +670,7 @@ def extract_task_fallback(
     return None
 
 
-# ============================================================
-# TASK NORMALIZATION
-# ============================================================
+
 
 def _normalize_task_fields(
     task: dict[str, Any],
@@ -730,9 +685,7 @@ def _normalize_task_fields(
     """
     normalized = dict(task)
 
-    # --------------------------------------------------------
-    # TITLE
-    # --------------------------------------------------------
+   
     title = normalized.get("title")
 
     if title:
@@ -782,17 +735,13 @@ def _normalize_task_fields(
 
         normalized["title"] = title.strip()
 
-    # --------------------------------------------------------
-    # DESCRIPTION
-    # --------------------------------------------------------
+   
     description = normalized.get("description")
 
     if not description:
         normalized["description"] = original_message.strip()
 
-    # --------------------------------------------------------
-    # DURATION
-    # --------------------------------------------------------
+    
     message_duration = extract_duration_minutes(
         original_message
     )
@@ -815,9 +764,7 @@ def _normalize_task_fields(
                     None,
                 )
 
-    # --------------------------------------------------------
-    # IMPORTANCE
-    # --------------------------------------------------------
+   
     #
     # THIS IS THE IMPORTANT FIX.
     #
@@ -836,9 +783,7 @@ def _normalize_task_fields(
         original_message,
     )
 
-    # --------------------------------------------------------
-    # DEADLINE
-    # --------------------------------------------------------
+   
     message_deadline = extract_deadline(
         original_message
     )
@@ -861,9 +806,7 @@ def _normalize_task_fields(
     return normalized
 
 
-# ============================================================
-# MANAGEMENT DATA POST-PROCESSING
-# ============================================================
+
 
 def postprocess_management_data(
     data: dict[str, Any],
@@ -880,9 +823,7 @@ def postprocess_management_data(
 
     result = dict(data)
 
-    # --------------------------------------------------------
-    # Ensure all expected collections exist.
-    # --------------------------------------------------------
+    
     for key in (
         "tasks",
         "meetings",
@@ -895,9 +836,7 @@ def postprocess_management_data(
         if not isinstance(value, list):
             result[key] = []
 
-    # --------------------------------------------------------
-    # Normalize tasks.
-    # --------------------------------------------------------
+   
     normalized_tasks: list[dict[str, Any]] = []
 
     for task in result["tasks"]:
@@ -915,9 +854,8 @@ def postprocess_management_data(
 
     result["tasks"] = normalized_tasks
 
-    # --------------------------------------------------------
-    # Deterministic fallback if Gemma produced no task.
-    # --------------------------------------------------------
+    
+    
     if not result["tasks"]:
         fallback_task = extract_task_fallback(
             original_message
@@ -934,9 +872,7 @@ def postprocess_management_data(
     return result
 
 
-# ============================================================
-# JSON EXTRACTION
-# ============================================================
+
 
 def _extract_balanced_json(
     text: str,
@@ -1008,9 +944,7 @@ def _extract_json_from_text(
 
     text = text.strip()
 
-    # --------------------------------------------------------
-    # Direct JSON
-    # --------------------------------------------------------
+    
     try:
         parsed = json.loads(text)
 
@@ -1019,9 +953,7 @@ def _extract_json_from_text(
     except json.JSONDecodeError:
         pass
 
-    # --------------------------------------------------------
-    # Markdown fenced JSON
-    # --------------------------------------------------------
+    
     fenced = re.search(
         r"```(?:json)?\s*(.*?)```",
         text,
@@ -1039,9 +971,7 @@ def _extract_json_from_text(
         except json.JSONDecodeError:
             pass
 
-    # --------------------------------------------------------
-    # Balanced JSON object inside llama.cpp logs
-    # --------------------------------------------------------
+    
     candidate = _extract_balanced_json(text)
 
     if candidate:
@@ -1056,9 +986,7 @@ def _extract_json_from_text(
     return None
 
 
-# ============================================================
-# GEMMA PROMPT
-# ============================================================
+
 
 def _build_prompt(message: str) -> str:
     """
@@ -1120,9 +1048,7 @@ Return only JSON.
 """.strip()
 
 
-# ============================================================
-# LLAMA / GEMMA EXECUTION
-# ============================================================
+
 
 def _run_gemma(
     prompt: str,
@@ -1162,9 +1088,7 @@ def _run_gemma(
     return stderr
 
 
-# ============================================================
-# MAIN PARSER
-# ============================================================
+
 
 def extract_information(
     message: str,
@@ -1215,11 +1139,7 @@ def extract_information(
             "rules": [],
         }
 
-    # --------------------------------------------------------
-    # CRITICAL:
-    #
-    # Normalize BEFORE ManagementData/Pydantic validation.
-    # --------------------------------------------------------
+    
     normalized = postprocess_management_data(
         parsed,
         message,
@@ -1228,8 +1148,6 @@ def extract_information(
     return normalized
 
 
-# ============================================================
-# BACKWARD COMPATIBILITY
-# ============================================================
+
 
 parse_message = extract_information
