@@ -12,5 +12,5 @@ app_file: dist/index.html
 
 AI-powered personal secretary and time-management assistant.
 
-This application provides a natural-language interface for managing tasks,
-projects, events, schedules and personal information.
+This application provides a natural-language interface for managing
+tasks, projects, events, schedules and personal information.
