@@ -1296,6 +1296,8 @@ def _detect_secretary_intent(
             "when is the review",
             "when should the review",
             "when is review",
+            "what do i need to review",
+            "what should i review",
         )
     ):
         return "review"

@@ -18,3 +18,4 @@ gradio_client
 python-dotenv
 psycopg[binary]>=3.2,<4
 pgvector>=0.4,<1
+dateparser==1.4.3
