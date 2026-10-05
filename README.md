@@ -4,8 +4,7 @@ emoji: 🤖
 colorFrom: indigo
 colorTo: purple
 sdk: static
-app_build_command: cd frontend && npm run build
-app_file: frontend/dist/index.html
+app_file: index.html
 ---
 
 # AI Secretary
