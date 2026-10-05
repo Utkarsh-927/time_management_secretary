@@ -1,6 +1,6 @@
----
+﻿---
 title: AI Secretary
-emoji: ??
+emoji: 🤖
 colorFrom: indigo
 colorTo: purple
 sdk: static
