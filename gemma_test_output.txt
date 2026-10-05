@@ -1,0 +1,14 @@
+User:
+You are a personal secretary.
+
+SECRETARY MEMORY:
+Arun is responsible for the ABC website project.
+
+USER QUESTION:
+Who is responsible for the ABC website project?
+
+Answer directly in one short sentence.
+
+Assistant:
+Arun is responsible for the ABC website project.
+

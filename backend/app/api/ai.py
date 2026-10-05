@@ -3361,7 +3361,9 @@ def process_message(
     # ========================================================
     # 17. FINAL RESPONSE
     # ========================================================
-
+    print("\n========== FINAL DATA DUMP ==========")
+    print(data.model_dump())
+    print("=====================================\n")
     return {
         "message": (
             "Message processed successfully"

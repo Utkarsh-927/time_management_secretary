@@ -116,7 +116,7 @@ def _extract_assignments(
     pattern = re.compile(
         r"\bI\s+"
         r"(?:gave|assigned)\s+"
-        r"(?P<person>[A-Z][A-Za-z.'-]{1,40}(?:\s+[A-Z][A-Za-z.'-]{1,40}){0,2}?)"
+        r"(?P<person>[A-Z][A-Za-z.'-]{1,40})"
         r"\s+"
         r"(?:the|a|an)\s+"
         r"(?P<work>[^.!?\n]+)",
@@ -147,14 +147,13 @@ def _extract_assignments(
     if not person or not work:
 
         pattern = re.compile(
-            r"\b(?:assigned|gave)\s+"
-            r"(?:the|a|an)\s+"
-            r"(?P<work>[^.!?\n]+?)\s+"
-            r"to\s+"
-            r"(?P<person>[A-Z][A-Za-z.'-]{1,40}(?:\s+[A-Z][A-Za-z.'-]{1,40}){0,2})",
-            re.IGNORECASE,
-        )
-
+        r"\b(?:assigned|gave)\s+"
+        r"(?:the|a|an)\s+"
+        r"(?P<work>[^.!?\n]+?)\s+"
+        r"to\s+"
+        r"(?P<person>[A-Z][A-Za-z'-]{1,40})",
+        re.IGNORECASE,
+    )
         match = pattern.search(message)
 
         if match:

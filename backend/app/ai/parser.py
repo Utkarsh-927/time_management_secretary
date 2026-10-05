@@ -736,7 +736,51 @@ def _normalize_task_fields(
     title = normalized.get("title")
 
     if title:
-        normalized["title"] = str(title).strip()
+        title = str(title).strip()
+
+        # Fix common spacing corruption from Gemma.
+        title = re.sub(
+            r"(?i)\b(the|a|an)(?=[a-z])",
+            r"\1 ",
+            title,
+        )
+
+       # Fix split word corruption.
+        title = re.sub(
+            r"(?i)\ba\s+nd\b",
+            "and",
+            title,
+        )
+
+
+        # Fix common split-token corruption from Gemma.
+        title = re.sub(
+            r"\bA\s+I\b",
+            "AI",
+            title,
+        )
+
+        title = re.sub(
+            r"(?i)\ba\s+([a-z]{3,})\b",
+            r"a\1",
+            title,
+        )
+
+        # Remove dangling deadline connector.
+        title = re.sub(
+            r"(?i)\s+\bby\s*$",
+            "",
+            title,
+        )
+
+        # Clean repeated whitespace.
+        title = re.sub(
+            r"\s+",
+            " ",
+            title,
+        )
+
+        normalized["title"] = title.strip()
 
     # --------------------------------------------------------
     # DESCRIPTION

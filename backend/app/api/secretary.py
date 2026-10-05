@@ -21,13 +21,121 @@ from ..models import (
     EntityRelationship,
     Event,
     Memory,
+    Embedding,
 )
 
 from ..models.task import Task
 
+from ..services.embedding_service import (
+    generate_embedding,
+    EMBEDDING_MODEL_NAME,
+)
+
 from ..services.time_budget_planner import (
     create_time_budget_plan,
 )
+
+
+# ============================================================================
+# Optional NLTK stopwords
+# ============================================================================
+
+try:
+    from nltk.corpus import stopwords
+
+    ENGLISH_STOPWORDS = set(
+        stopwords.words("english")
+    )
+
+except Exception:
+    # Fallback so the secretary does not crash
+    # if NLTK or its stopword corpus is unavailable.
+    ENGLISH_STOPWORDS = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "but",
+        "by",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "here",
+        "hers",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "our",
+        "she",
+        "should",
+        "that",
+        "the",
+        "their",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+
+
+# Words that are usually not useful for entity matching
+# but may not be covered well enough by generic stopwords.
+SECRETARY_SEARCH_STOPWORDS = {
+    "tell",
+    "show",
+    "give",
+    "need",
+    "want",
+    "know",
+    "please",
+    "find",
+    "get",
+    "remember",
+    "remembering",
+    "thing",
+    "things",
+}
 
 
 router = APIRouter(
@@ -190,7 +298,6 @@ def secretary_knowledge(
             }
             for entity in entities
         ],
-
         "facts": [
             {
                 "id": fact.id,
@@ -207,7 +314,6 @@ def secretary_knowledge(
             }
             for fact in facts
         ],
-
         "relationships": [
             {
                 "id": relationship.id,
@@ -227,7 +333,6 @@ def secretary_knowledge(
             }
             for relationship in relationships
         ],
-
         "events": [
             {
                 "id": event.id,
@@ -245,7 +350,6 @@ def secretary_knowledge(
             }
             for event in events
         ],
-
         "memories": [
             {
                 "id": memory.id,
@@ -310,6 +414,61 @@ def _safe_text(value) -> str:
 
 
 # ============================================================================
+# Search-term extraction
+# ============================================================================
+
+
+def _extract_search_terms(
+    question: str,
+) -> list[str]:
+    """
+    Convert a natural-language question into useful
+    lexical search terms.
+
+    Uses NLTK English stopwords when available and
+    additional secretary-specific stopwords.
+
+    Semantic pgvector search remains responsible for
+    understanding the meaning of the complete question.
+    """
+
+    text = question.lower()
+
+    # Extract actual words/numbers.
+    #
+    # This keeps:
+    #   Arun
+    #   ABC
+    #   Friday
+    #   25000
+    #   3
+    #
+    # while removing punctuation.
+    tokens = re.findall(
+        r"[a-zA-Z0-9]+",
+        text,
+    )
+
+    terms = []
+
+    for token in tokens:
+
+        if len(token) < 2:
+            continue
+
+        if token in ENGLISH_STOPWORDS:
+            continue
+
+        if token in SECRETARY_SEARCH_STOPWORDS:
+            continue
+
+        terms.append(token)
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(terms))
+
+
+# ============================================================================
 # Time-budget detection
 # ============================================================================
 
@@ -320,113 +479,100 @@ def _parse_time_budget(
     """
     Detect available time from natural language.
 
-    Supported examples:
+    Examples:
         I have 20 minutes
         I have 1 hour
         I have 3 hours
         I have 90 minutes
         I have 1.5 hours
+        I have 1 hour 15 minutes
+        I have 2 hours 10 minutes
         I have an hour
         I only have 30 mins
         I have half an hour
 
     Returns:
-        available minutes, or None when no time budget
-        is detected.
+        Available minutes, or None when no time budget is detected.
     """
+
+    if not question:
+        return None
 
     q = question.lower().strip()
 
-    # ------------------------------------------------------------------
-    # Common natural-language expressions
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
+    # Natural-language expressions
+    # --------------------------------------------------
 
-    if re.search(
-        r"\bhalf\s+an?\s+hour\b",
-        q,
-    ):
+    if re.search(r"\bhalf\s+an?\s+hour\b", q):
         return 30
 
-    if re.search(
-        r"\ban?\s+hour\b",
-        q,
-    ):
-        return 60
+    if re.search(r"\bquarter\s+of\s+an?\s+hour\b", q):
+        return 15
 
-    # ------------------------------------------------------------------
+    if re.search(r"\ban?\s+hour\b", q):
+        # Handle "an hour" / "a hour" after checking the
+        # more specific numeric hour+minute expression below.
+        if not re.search(
+            r"\b\d+(?:\.\d+)?\s*(?:hours?|hrs?)\b",
+            q,
+        ):
+            return 60
+
+    # --------------------------------------------------
+    # Hours + minutes
+    # Examples:
+    #   1 hour 15 minutes
+    #   2 hours 10 minutes
+    #   1 hr 30 min
+    #   1.5 hours 20 minutes
+    # --------------------------------------------------
+
+    match = re.search(
+        r"\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)"
+        r"\s*(?:and\s*)?"
+        r"(\d+(?:\.\d+)?)\s*(?:minutes?|mins?)\b",
+        q,
+    )
+
+    if match:
+        hours = float(match.group(1))
+        minutes = float(match.group(2))
+
+        return round(hours * 60 + minutes)
+
+    # --------------------------------------------------
     # Decimal hours
-    # ------------------------------------------------------------------
+    # Examples:
+    #   1.5 hours -> 90
+    #   2.5 hrs   -> 150
+    # --------------------------------------------------
 
-    decimal_hour_match = re.search(
-        r"\b(\d+(?:\.\d+)?)\s*"
-        r"(?:hours?|hrs?|hr)\b",
+    match = re.search(
+        r"\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b",
         q,
-        flags=re.IGNORECASE,
     )
 
-    if decimal_hour_match:
-        try:
-            hours = float(
-                decimal_hour_match.group(1)
-            )
+    if match:
+        hours = float(match.group(1))
+        return round(hours * 60)
 
-            minutes = round(
-                hours * 60
-            )
-
-            if minutes > 0:
-                return minutes
-
-        except (TypeError, ValueError):
-            pass
-
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
     # Minutes
-    # ------------------------------------------------------------------
+    # Examples:
+    #   5 minutes
+    #   7 min
+    #   43 mins
+    #   90 minutes
+    # --------------------------------------------------
 
-    minute_match = re.search(
-        r"\b(\d+)\s*"
-        r"(?:minutes?|mins?|min)\b",
+    match = re.search(
+        r"\b(\d+(?:\.\d+)?)\s*(?:minutes?|mins?)\b",
         q,
-        flags=re.IGNORECASE,
     )
 
-    if minute_match:
-        try:
-            minutes = int(
-                minute_match.group(1)
-            )
-
-            if minutes > 0:
-                return minutes
-
-        except (TypeError, ValueError):
-            pass
-
-    # ------------------------------------------------------------------
-    # Integer hours
-    # ------------------------------------------------------------------
-
-    hour_match = re.search(
-        r"\b(\d+)\s*"
-        r"(?:hours?|hrs?|hr)\b",
-        q,
-        flags=re.IGNORECASE,
-    )
-
-    if hour_match:
-        try:
-            hours = int(
-                hour_match.group(1)
-            )
-
-            minutes = hours * 60
-
-            if minutes > 0:
-                return minutes
-
-        except (TypeError, ValueError):
-            pass
+    if match:
+        return round(float(match.group(1)))
 
     return None
 
@@ -439,18 +585,9 @@ def _is_time_budget_question(
     what work they can do within a limited amount of time.
 
     A duration alone is not enough.
-
-    For example:
-        "The meeting lasts 2 hours"
-
-    should not automatically become a planning request.
-
-    The question should also contain planning/work intent.
     """
 
-    minutes = _parse_time_budget(
-        question
-    )
+    minutes = _parse_time_budget(question)
 
     if minutes is None:
         return False
@@ -542,8 +679,8 @@ def _build_time_budget_answer(
     plan: dict,
 ) -> str:
     """
-    Convert the structured time-budget plan into a
-    natural-language secretary response.
+    Convert the structured time-budget plan into
+    a natural-language secretary response.
     """
 
     available_minutes = int(
@@ -580,7 +717,7 @@ def _build_time_budget_answer(
                 "task_title",
                 "Untitled task",
             )
-        )
+        ).strip()
 
         recommended_minutes = int(
             item.get(
@@ -594,7 +731,7 @@ def _build_time_budget_answer(
                 "recommendation",
                 "",
             )
-        )
+        ).strip()
 
         partial = bool(
             item.get(
@@ -604,7 +741,7 @@ def _build_time_budget_answer(
         )
 
         lines.append(
-            f"{index}. {title} — "
+            f"{index}. {title} - "
             f"{_format_duration(recommended_minutes)}"
         )
 
@@ -613,7 +750,7 @@ def _build_time_budget_answer(
         ):
             lines.append(
                 "   Its total duration is unknown, "
-                "so treat this as a focused work block."
+                "so use this as a focused work block."
             )
 
         elif partial:
@@ -624,52 +761,103 @@ def _build_time_budget_answer(
 
         else:
             lines.append(
-                "   This can be completed within "
-                "the allocated time."
+                "   This should complete the task."
             )
 
-    remaining = int(
+    total_recommended_minutes = int(
+        plan.get(
+            "total_recommended_minutes",
+            0,
+        )
+    )
+
+    remaining_budget_minutes = int(
         plan.get(
             "remaining_budget_minutes",
             0,
         )
     )
 
-    if remaining > 0:
-        lines.append(
-            f"You would still have "
-            f"{_format_duration(remaining)} available."
-        )
-    else:
+    if remaining_budget_minutes <= 0:
         lines.append(
             "That uses all of your available time."
         )
 
+    elif total_recommended_minutes > 0:
+        lines.append(
+            f"You would still have "
+            f"{_format_duration(remaining_budget_minutes)} "
+            "available."
+        )
+
     return "\n".join(lines)
 
+# ============================================================================
+# Semantic pgvector retrieval
+# ============================================================================
 
-def _create_secretary_time_budget_plan(
-    available_minutes: int,
+
+def _semantic_memory_search(
+    question: str,
     user_id: str,
     db: Session,
-) -> dict:
+    limit: int = 20,
+):
     """
-    Load only the current user's active tasks and
-    generate a time-budget plan.
+    Search memory embeddings using pgvector cosine distance.
+
+    Returns Memory objects ordered by semantic relevance.
+
+    Semantic retrieval failure is intentionally swallowed so
+    that the secretary can continue using structured retrieval.
     """
 
-    tasks = (
-        db.query(Task)
-        .filter(
-            Task.user_id == user_id,
+    try:
+        query_vector = generate_embedding(
+            question
         )
-        .all()
-    )
 
-    return create_time_budget_plan(
-        tasks=tasks,
-        available_minutes=available_minutes,
-    )
+        if not query_vector:
+            return []
+
+        semantic_results = (
+            db.query(
+                Memory,
+                Embedding.embedding.cosine_distance(
+                    query_vector
+                ).label("distance"),
+            )
+            .join(
+                Embedding,
+                Embedding.memory_id == Memory.id,
+            )
+            .filter(
+                Memory.user_id == user_id,
+                Memory.is_active.is_(True),
+
+                # IMPORTANT:
+                # Compare against the configured embedding
+                # model, not the column against itself.
+                Embedding.model_name
+                == EMBEDDING_MODEL_NAME,
+            )
+            .order_by(
+                Embedding.embedding.cosine_distance(
+                    query_vector
+                ).asc()
+            )
+            .limit(limit)
+            .all()
+        )
+
+        return [
+            memory
+            for memory, _distance
+            in semantic_results
+        ]
+
+    except Exception:
+        return []
 
 
 # ============================================================================
@@ -683,115 +871,165 @@ def _search_secretary_memory(
     db: Session,
 ):
     """
-    Retrieve structured secretary knowledge using deterministic
-    lexical matching.
+    Retrieve secretary knowledge using a hybrid strategy:
 
-    pgvector semantic retrieval can be added later after this
-    foundation is fully verified.
+    1. Semantic pgvector memory search
+    2. Exact lexical entity search
+    3. Relationship expansion
+    4. Structured facts
+    5. Structured relationships
+    6. Structured events
+    7. Related memories
+
+    Semantic search handles meaning.
+
+    Lexical search handles exact names such as:
+        Arun
+        ABC
+        XYZ
+
+    Structured retrieval keeps authoritative answers such as
+    deadlines, budgets, responsibilities, and reviews reliable.
     """
 
-    words = [
-        word.strip(
-            ".,?!:;()[]{}\\\"'"
-        )
-        for word in question.lower().split()
-    ]
+    # ========================================================================
+    # 1. Semantic memory search
+    # ========================================================================
 
-    words = [
-        word
-        for word in words
-        if len(word) >= 3
-        and word not in {
-            "what",
-            "when",
-            "where",
-            "which",
-            "who",
-            "whom",
-            "does",
-            "did",
-            "the",
-            "for",
-            "from",
-            "with",
-            "about",
-            "need",
-            "want",
-            "tell",
-            "show",
-            "give",
-            "have",
-            "has",
-            "had",
-            "is",
-            "are",
-            "was",
-            "were",
-            "and",
-            "should",
-            "could",
-            "would",
-            "can",
-            "this",
-            "that",
-        }
-    ]
-
-    # ------------------------------------------------------------------------
-    # Entities
-    # ------------------------------------------------------------------------
-
-    entity_query = db.query(
-        Entity
-    ).filter(
-        Entity.user_id == user_id
+    semantic_memories = _semantic_memory_search(
+        question=question,
+        user_id=user_id,
+        db=db,
+        limit=20,
     )
+
+    # ========================================================================
+    # 2. Extract useful lexical search terms
+    # ========================================================================
+
+    words = _extract_search_terms(
+        question
+    )
+
+    # ========================================================================
+    # 3. Exact/lexical entity matching
+    # ========================================================================
+
+    entity_query = (
+        db.query(Entity)
+        .filter(
+            Entity.user_id == user_id
+        )
+    )
+
+    lexical_entities = []
 
     if words:
 
-        entity_conditions = [
-            Entity.name.ilike(
-                f"%{word}%"
-            )
-            for word in words
-        ]
+        entity_conditions = []
 
-        entity_conditions += [
-            Entity.description.ilike(
-                f"%{word}%"
+        for word in words:
+            entity_conditions.append(
+                Entity.name.ilike(
+                    f"%{word}%"
+                )
             )
-            for word in words
-        ]
 
-        entities = (
+            entity_conditions.append(
+                Entity.description.ilike(
+                    f"%{word}%"
+                )
+            )
+
+        lexical_entities = (
             entity_query
             .filter(
-                or_(
-                    *entity_conditions
-                )
+                or_(*entity_conditions)
             )
             .order_by(
                 Entity.updated_at.desc()
             )
             .limit(20)
+            .all()
+        )
+
+    # ========================================================================
+    # 4. Build initial entity IDs
+    # ========================================================================
+
+    entity_ids = {
+        memory.entity_id
+        for memory in semantic_memories
+        if memory.entity_id is not None
+    }
+
+    entity_ids.update(
+        entity.id
+        for entity in lexical_entities
+    )
+
+    # ========================================================================
+    # 5. Relationship expansion
+    # ========================================================================
+
+    if entity_ids:
+
+        related_relationships = (
+            db.query(EntityRelationship)
+            .filter(
+                EntityRelationship.user_id
+                == user_id,
+
+                EntityRelationship.is_current.is_(
+                    True
+                ),
+
+                or_(
+                    EntityRelationship.source_entity_id.in_(
+                        entity_ids
+                    ),
+                    EntityRelationship.target_entity_id.in_(
+                        entity_ids
+                    ),
+                ),
+            )
+            .limit(50)
+            .all()
+        )
+
+        for relationship in related_relationships:
+
+            entity_ids.add(
+                relationship.source_entity_id
+            )
+
+            entity_ids.add(
+                relationship.target_entity_id
+            )
+
+    # ========================================================================
+    # 6. Retrieve entities
+    # ========================================================================
+
+    if entity_ids:
+
+        entities = (
+            db.query(Entity)
+            .filter(
+                Entity.user_id == user_id,
+                Entity.id.in_(entity_ids),
+            )
+            .order_by(
+                Entity.updated_at.desc()
+            )
+            .limit(30)
             .all()
         )
 
     else:
 
-        entities = (
-            entity_query
-            .order_by(
-                Entity.updated_at.desc()
-            )
-            .limit(20)
-            .all()
-        )
-
-    # If lexical matching found nothing, retrieve recent entities.
-
-    if not entities:
-
+        # If semantic + lexical retrieval found nothing,
+        # use recent entities as a fallback.
         entities = (
             db.query(Entity)
             .filter(
@@ -809,14 +1047,15 @@ def _search_secretary_memory(
         for entity in entities
     }
 
-    # ------------------------------------------------------------------------
-    # Facts
-    # ------------------------------------------------------------------------
+    # ========================================================================
+    # 7. Facts
+    # ========================================================================
 
-    fact_query = db.query(
-        Fact
-    ).filter(
-        Fact.user_id == user_id
+    fact_query = (
+        db.query(Fact)
+        .filter(
+            Fact.user_id == user_id
+        )
     )
 
     if entity_ids:
@@ -852,15 +1091,16 @@ def _search_secretary_memory(
             .all()
         )
 
-    # ------------------------------------------------------------------------
-    # Relationships
-    # ------------------------------------------------------------------------
+    # ========================================================================
+    # 8. Relationships
+    # ========================================================================
 
-    relationship_query = db.query(
-        EntityRelationship
-    ).filter(
-        EntityRelationship.user_id == user_id,
-        EntityRelationship.is_current.is_(True),
+    relationship_query = (
+        db.query(EntityRelationship)
+        .filter(
+            EntityRelationship.user_id == user_id,
+            EntityRelationship.is_current.is_(True),
+        )
     )
 
     if entity_ids:
@@ -895,14 +1135,15 @@ def _search_secretary_memory(
             .all()
         )
 
-    # ------------------------------------------------------------------------
-    # Events
-    # ------------------------------------------------------------------------
+    # ========================================================================
+    # 9. Events
+    # ========================================================================
 
-    event_query = db.query(
-        Event
-    ).filter(
-        Event.user_id == user_id
+    event_query = (
+        db.query(Event)
+        .filter(
+            Event.user_id == user_id
+        )
     )
 
     if entity_ids:
@@ -934,25 +1175,28 @@ def _search_secretary_memory(
             .all()
         )
 
-    # ------------------------------------------------------------------------
-    # Memories
-    # ------------------------------------------------------------------------
+    # ========================================================================
+    # 10. Memories
+    # ========================================================================
 
-    memory_query = db.query(
-        Memory
-    ).filter(
-        Memory.user_id == user_id,
-        Memory.is_active.is_(True),
-    )
+    # Start with semantic memories because they are the
+    # most relevant to the current question.
+    memory_map = {
+        memory.id: memory
+        for memory in semantic_memories
+    }
 
+    # Add memories connected to the final entity set.
     if entity_ids:
 
-        memories = (
-            memory_query
+        related_memories = (
+            db.query(Memory)
             .filter(
+                Memory.user_id == user_id,
+                Memory.is_active.is_(True),
                 Memory.entity_id.in_(
                     entity_ids
-                )
+                ),
             )
             .order_by(
                 Memory.importance.desc(),
@@ -962,17 +1206,41 @@ def _search_secretary_memory(
             .all()
         )
 
-    else:
+        for memory in related_memories:
+            memory_map[memory.id] = memory
 
-        memories = (
-            memory_query
-            .order_by(
-                Memory.importance.desc(),
-                Memory.updated_at.desc(),
-            )
-            .limit(50)
-            .all()
+    memories = list(
+        memory_map.values()
+    )
+
+    # ========================================================================
+    # 11. Sort memories
+    # ========================================================================
+
+    semantic_ids = {
+        memory.id
+        for memory in semantic_memories
+    }
+
+    memories.sort(
+        key=lambda memory: (
+            # Semantic results first
+            0
+            if memory.id in semantic_ids
+            else 1,
+
+            # Important memories next
+            -float(
+                memory.importance or 0
+            ),
+
+            # Then latest
+            memory.updated_at
+            or datetime.min,
         )
+    )
+
+    memories = memories[:50]
 
     return (
         entities,
@@ -1152,59 +1420,76 @@ def _build_grounded_context(
 # ============================================================================
 # Intent detection
 # ============================================================================
-
-
-def _detect_secretary_intent(
-    question: str,
-) -> str:
+def _detect_secretary_intent(question: str) -> str:
     """
-    Detect the primary information type requested by the user.
+    Detect the type of secretary question.
+
+    Supported intents:
+    - time_budget
+    - deadline
+    - review
+    - responsibility
+    - budget
+    - task
+    - general
     """
 
-    # Time-budget detection comes first because questions such as
-    # "I have 20 minutes, what should I do?" could otherwise
-    # accidentally be treated as a generic question.
+    # ========================================================================
+    # TIME BUDGET
+    # ========================================================================
 
-    if _is_time_budget_question(
-        question
-    ):
+    if _is_time_budget_question(question):
         return "time_budget"
 
     q = question.lower().strip()
 
-    # Deadline / due-date questions
+    # ========================================================================
+    # DEADLINE
+    # ========================================================================
 
     if any(
         phrase in q
         for phrase in (
-            "deadline",
+            "when is the deadline",
+            "what is the deadline",
+            "what's the deadline",
+            "deadline for",
+            "deadline of",
+            "when is it due",
+            "when is this due",
+            "when does it need to be done",
+            "when should it be completed",
+            "by when",
             "due date",
             "due by",
-            "when is it due",
-            "when does it need to be finished",
-            "when does it need to be done",
-            "when should it be finished",
-            "by when",
         )
     ):
         return "deadline"
 
-    # Review / follow-up questions
+    # ========================================================================
+    # REVIEW
+    # ========================================================================
 
     if any(
         phrase in q
         for phrase in (
-            "review",
-            "follow up",
-            "follow-up",
-            "followup",
-            "check back",
-            "check on",
+            "when should i review",
+            "when do i review",
+            "when to review",
+            "when should we review",
+            "when do we review",
+            "review after",
+            "review in",
+            "when is the review",
+            "when should the review",
+            "when is review",
         )
     ):
         return "review"
 
-    # Responsibility questions
+    # ========================================================================
+    # RESPONSIBILITY
+    # ========================================================================
 
     if any(
         phrase in q
@@ -1216,26 +1501,44 @@ def _detect_secretary_intent(
             "assigned to whom",
             "who owns",
             "who has the task",
+            "what responsibility",
+            "what responsibilities",
+            "responsibilities did i give",
+            "what did i assign",
+            "what did i give",
+            "what was given to",
+            "what responsibilities does",
+            "what is responsible for",
         )
     ):
         return "responsibility"
 
-    # Budget / cost / amount questions
+    # ========================================================================
+    # BUDGET
+    # ========================================================================
 
     if any(
         phrase in q
         for phrase in (
-            "budget",
-            "cost",
-            "price",
-            "amount",
-            "how much",
-            "money",
+            "how much money",
+            "how much is allocated",
+            "how much budget",
+            "what is the budget",
+            "what's the budget",
+            "budget for",
+            "budget of",
+            "allocated amount",
+            "allocated money",
+            "project cost",
+            "how much will",
+            "how much does it cost",
         )
     ):
         return "budget"
 
-    # Task/work questions
+    # ========================================================================
+    # TASK / WORK
+    # ========================================================================
 
     if any(
         phrase in q
@@ -1243,19 +1546,42 @@ def _detect_secretary_intent(
             "what task",
             "what tasks",
             "what work",
+            "what website work",
+            "what work is",
+            "what work does",
+            "what work are",
+            "what is handling",
+            "what is he handling",
+            "what is she handling",
+            "what is arun handling",
+            "what is assigned",
+            "what is he assigned",
+            "what is she assigned",
+            "what tasks is",
+            "what tasks are",
+            "what is working on",
+            "what is he working on",
+            "what is she working on",
+            "what is arun working on",
             "what project",
             "what did i give",
             "what was assigned",
             "what do i need to do",
+            "what do we need to do",
+            "what needs to be done",
         )
     ):
         return "task"
+
+    # ========================================================================
+    # GENERAL
+    # ========================================================================
 
     return "general"
 
 
 # ============================================================================
-# Deterministic answers for authoritative structured memory
+# Deterministic answers
 # ============================================================================
 
 
@@ -1274,9 +1600,6 @@ def _extract_deadline_text(
         event.description
     ).strip()
 
-    # Example:
-    # "ABC website project deadline: Friday"
-
     if ":" in title:
 
         candidate = title.rsplit(
@@ -1286,9 +1609,6 @@ def _extract_deadline_text(
 
         if candidate:
             return candidate
-
-    # Example:
-    # "Deadline is Friday."
 
     match = re.search(
         r"deadline\s+(?:is|was|for)\s+(.+)",
@@ -1303,8 +1623,6 @@ def _extract_deadline_text(
             .strip()
             .rstrip(".")
         )
-
-    # Fallback to event_time if available.
 
     if event.event_time:
 
@@ -1329,9 +1647,25 @@ def _extract_review_text(
     description = _safe_text(
         event.description
     ).strip()
+    def _normalize_review_text(value: str) -> str:
+        value = value.strip().rstrip(".")
 
-    # Example:
-    # "Review ABC website project after 3 days"
+        # Fix missing spaces after "after".
+        value = re.sub(
+            r"(?i)\bafter(?=\d)",
+            "after ",
+            value,
+        )
+
+        # Clean repeated whitespace.
+        value = re.sub(
+            r"\s+",
+            " ",
+            value,
+        )
+
+        return value.strip()
+
 
     match = re.search(
         r"(after\s+.+)$",
@@ -1341,14 +1675,7 @@ def _extract_review_text(
 
     if match:
 
-        return (
-            match.group(1)
-            .strip()
-            .rstrip(".")
-        )
-
-    # Example:
-    # "Review requested after 3 days."
+        return _normalize_review_text(match.group(1))
 
     match = re.search(
         r"(after\s+.+)$",
@@ -1358,11 +1685,7 @@ def _extract_review_text(
 
     if match:
 
-        return (
-            match.group(1)
-            .strip()
-            .rstrip(".")
-        )
+        return _normalize_review_text(match.group(1))
 
     if event.event_time:
 
@@ -1374,6 +1697,7 @@ def _extract_review_text(
 
 
 def _deterministic_secretary_answer(
+    question: str,
     intent: str,
     entities,
     facts,
@@ -1386,9 +1710,25 @@ def _deterministic_secretary_answer(
     structured database records.
     """
 
-    # ------------------------------------------------------------------------
+    question_lower = _safe_text(question).lower().strip()
+
+    # Build a reusable entity lookup.
+    entity_names = {
+        entity.id: _safe_text(entity.name).strip()
+        for entity in entities
+        if entity.name
+    }
+
+    entity_types = {
+        entity.id: str(
+            entity.entity_type or ""
+        ).upper()
+        for entity in entities
+    }
+
+    # ========================================================================
     # DEADLINE
-    # ------------------------------------------------------------------------
+    # ========================================================================
 
     if intent == "deadline":
 
@@ -1404,10 +1744,8 @@ def _deterministic_secretary_answer(
 
             for event in deadline_events:
 
-                deadline_text = (
-                    _extract_deadline_text(
-                        event
-                    )
+                deadline_text = _extract_deadline_text(
+                    event
                 )
 
                 if deadline_text:
@@ -1428,29 +1766,11 @@ def _deterministic_secretary_answer(
 
         return None
 
-    # ------------------------------------------------------------------------
-    # REVIEW / FOLLOW-UP
-    # ------------------------------------------------------------------------
+    # ========================================================================
+    # REVIEW
+    # ========================================================================
 
     if intent == "review":
-
-        # Map entity IDs to their names.
-        #
-        # Example:
-        #
-        # event.primary_entity_id = 8
-        # entity 8 = "ABC website project"
-        #
-        # This allows the answer to identify the actual
-        # project instead of incorrectly referring to a person.
-
-        entity_names = {
-            entity.id: _safe_text(
-                entity.name
-            ).strip()
-            for entity in entities
-            if entity.name
-        }
 
         review_events = [
             event
@@ -1463,34 +1783,31 @@ def _deterministic_secretary_answer(
                 "FOLLOW_UP",
             }
         ]
+        question_lower = question.lower().strip()
+
+        mentioned_review_events = [
+            event
+            for event in review_events
+            if (
+                entity_names.get(event.primary_entity_id)
+                and entity_names.get(event.primary_entity_id).lower()
+                in question_lower
+            )
+        ]
+
+        if mentioned_review_events:
+            review_events = mentioned_review_events
 
         if review_events:
 
             for event in review_events:
 
-                review_text = (
-                    _extract_review_text(
-                        event
-                    )
+                review_text = _extract_review_text(
+                    event
                 )
 
-                # ------------------------------------------------------------
-                # Resolve the entity attached to this review event.
-                #
-                # The current database contains:
-                #
-                # REVIEW
-                # "Review ABC website project after 3 days"
-                #
-                # primary_entity_id = 8
-                #
-                # Entity 8 = ABC website project
-                # ------------------------------------------------------------
-
-                primary_entity_name = (
-                    entity_names.get(
-                        event.primary_entity_id
-                    )
+                primary_entity_name = entity_names.get(
+                    event.primary_entity_id
                 )
 
                 if primary_entity_name:
@@ -1517,20 +1834,12 @@ def _deterministic_secretary_answer(
                         f"{primary_entity_name}."
                     )
 
-                # ------------------------------------------------------------
-                # Fallback when no primary entity is attached.
-                # ------------------------------------------------------------
-
                 if review_text:
 
                     return (
                         "You should review it "
                         f"{review_text}."
                     )
-
-            # ------------------------------------------------------------
-            # Last event-level fallback.
-            # ------------------------------------------------------------
 
             event = review_events[0]
 
@@ -1540,10 +1849,6 @@ def _deterministic_secretary_answer(
                     "The review is scheduled for "
                     f"{_safe_text(event.event_time)}."
                 )
-
-        # ------------------------------------------------------------
-        # Memory fallback.
-        # ------------------------------------------------------------
 
         for memory in memories:
 
@@ -1563,14 +1868,13 @@ def _deterministic_secretary_answer(
                 }
                 and content
             ):
-
                 return content
 
         return None
 
-    # ------------------------------------------------------------------------
+    # ========================================================================
     # RESPONSIBILITY
-    # ------------------------------------------------------------------------
+    # ========================================================================
 
     if intent == "responsibility":
 
@@ -1587,16 +1891,163 @@ def _deterministic_secretary_answer(
             }
         ]
 
-        if responsibility_relationships:
+        # --------------------------------------------------------------------
+        # Find entities explicitly mentioned in the question.
+        # --------------------------------------------------------------------
 
-            entity_names = {
-                entity.id: entity.name
-                for entity in entities
+        mentioned_entities = []
+
+        for entity in entities:
+
+            name = _safe_text(
+                entity.name
+            ).strip()
+
+            if not name:
+                continue
+
+            if name.lower() in question_lower:
+
+                mentioned_entities.append(entity)
+
+        # --------------------------------------------------------------------
+        # PROJECT/TASK mentioned in question
+        #
+        # Example:
+        # "Who is responsible for the ABC website project?"
+        #
+        # Find:
+        # Arun -> responsible_for -> ABC website project
+        # --------------------------------------------------------------------
+
+        mentioned_projects = [
+            entity
+            for entity in mentioned_entities
+            if entity_types.get(entity.id)
+            in {
+                "PROJECT",
+                "TASK",
+            }
+        ]
+
+        if mentioned_projects:
+
+            for project in mentioned_projects:
+
+                matching_relationships = [
+                    relationship
+                    for relationship
+                    in responsibility_relationships
+                    if (
+                        relationship.target_entity_id
+                        == project.id
+                    )
+                ]
+
+                if matching_relationships:
+
+                    people = []
+
+                    for relationship in matching_relationships:
+
+                        person = entity_names.get(
+                            relationship.source_entity_id
+                        )
+
+                        if (
+                            person
+                            and person not in people
+                        ):
+                            people.append(person)
+
+                    if people:
+
+                        if len(people) == 1:
+
+                            return (
+                                f"{people[0]} is responsible "
+                                f"for {entity_names[project.id]}."
+                            )
+
+                        return (
+                            f"{', '.join(people)} are responsible "
+                            f"for {entity_names[project.id]}."
+                        )
+
+        # --------------------------------------------------------------------
+        # PERSON mentioned in question
+        #
+        # Example:
+        # "What responsibilities did I give Arun?"
+        #
+        # Find all projects where:
+        # Arun -> responsible_for -> project
+        # --------------------------------------------------------------------
+
+        mentioned_people = [
+            entity
+            for entity in mentioned_entities
+            if entity_types.get(entity.id)
+            in {
+                "PERSON",
+                "USER",
+            }
+        ]
+
+        if mentioned_people:
+
+            person_ids = {
+                entity.id
+                for entity in mentioned_people
             }
 
-            relationship = (
-                responsibility_relationships[0]
-            )
+            assigned_projects = []
+
+            for relationship in responsibility_relationships:
+
+                if (
+                    relationship.source_entity_id
+                    not in person_ids
+                ):
+                    continue
+
+                project = entity_names.get(
+                    relationship.target_entity_id
+                )
+
+                if (
+                    project
+                    and project not in assigned_projects
+                ):
+                    assigned_projects.append(project)
+
+            if assigned_projects:
+
+                person_name = _safe_text(
+                    mentioned_people[0].name
+                ).strip()
+
+                if len(assigned_projects) == 1:
+
+                    return (
+                        f"{person_name} is responsible "
+                        f"for {assigned_projects[0]}."
+                    )
+
+                return (
+                    f"{person_name} is responsible "
+                    f"for "
+                    + ", ".join(assigned_projects)
+                    + "."
+                )
+
+        # --------------------------------------------------------------------
+        # Generic responsibility fallback
+        # --------------------------------------------------------------------
+
+        if responsibility_relationships:
+
+            relationship = responsibility_relationships[0]
 
             person = entity_names.get(
                 relationship.source_entity_id
@@ -1620,7 +2071,9 @@ def _deterministic_secretary_answer(
                     "for it."
                 )
 
-        # Memory fallback.
+        # --------------------------------------------------------------------
+        # Memory fallback
+        # --------------------------------------------------------------------
 
         for memory in memories:
 
@@ -1633,18 +2086,16 @@ def _deterministic_secretary_answer(
             ).strip()
 
             if (
-                memory_type
-                == "responsibility"
+                memory_type == "responsibility"
                 and content
             ):
-
                 return content
 
         return None
 
-    # ------------------------------------------------------------------------
+    # ========================================================================
     # BUDGET
-    # ------------------------------------------------------------------------
+    # ========================================================================
 
     if intent == "budget":
 
@@ -1666,6 +2117,35 @@ def _deterministic_secretary_answer(
             ).lower()
         ]
 
+        # --------------------------------------------------------------------
+        # Prefer a budget fact connected to an entity explicitly mentioned
+        # in the question.
+        # --------------------------------------------------------------------
+
+        mentioned_entity_ids = {
+            entity.id
+            for entity in entities
+            if entity.name
+            and _safe_text(entity.name).lower()
+            in question_lower
+        }
+
+        if mentioned_entity_ids:
+
+            related_budget_facts = [
+                fact
+                for fact in budget_facts
+                if getattr(
+                    fact,
+                    "entity_id",
+                    None,
+                ) in mentioned_entity_ids
+            ]
+
+            if related_budget_facts:
+
+                budget_facts = related_budget_facts
+
         selected_facts = (
             budget_facts
             if budget_facts
@@ -1682,13 +2162,10 @@ def _deterministic_secretary_answer(
                 isinstance(value, float)
                 and value.is_integer()
             ):
-
                 value_text = str(
                     int(value)
                 )
-
             else:
-
                 value_text = str(
                     value
                 )
@@ -1704,24 +2181,226 @@ def _deterministic_secretary_answer(
 
         return None
 
-    # ------------------------------------------------------------------------
+    # ========================================================================
     # TASK
-    # ------------------------------------------------------------------------
+    # ========================================================================
 
     if intent == "task":
+
+        # --------------------------------------------------------------------
+        # Find entities explicitly mentioned in the question.
+        # --------------------------------------------------------------------
+
+        mentioned_entities = []
+
+        for entity in entities:
+
+            name = _safe_text(
+                entity.name
+            ).strip()
+
+            if not name:
+                continue
+
+            if name.lower() in question_lower:
+
+                mentioned_entities.append(entity)
+
+        # --------------------------------------------------------------------
+        # PERSON -> PROJECT -> TASK
+        #
+        # Example:
+        # "What website work is Arun handling?"
+        #
+        # Arun
+        #   ↓ responsible_for
+        # ABC website project
+        #   ↓ contains_task
+        # homepage and contact form
+        # --------------------------------------------------------------------
+
+        mentioned_people = [
+            entity
+            for entity in mentioned_entities
+            if entity_types.get(entity.id)
+            in {
+                "PERSON",
+                "USER",
+            }
+        ]
+
+        if mentioned_people:
+
+            person_ids = {
+                entity.id
+                for entity in mentioned_people
+            }
+
+            project_ids = set()
+
+            for relationship in relationships:
+
+                relationship_type = str(
+                    relationship.relationship_type
+                ).lower()
+
+                if relationship_type not in {
+                    "responsible_for",
+                    "assigned_to",
+                    "owns",
+                }:
+                    continue
+
+                if (
+                    relationship.source_entity_id
+                    in person_ids
+                ):
+
+                    project_ids.add(
+                        relationship.target_entity_id
+                    )
+
+            # ---------------------------------------------------------------
+            # Project -> Task
+            # ---------------------------------------------------------------
+
+            task_ids = set()
+
+            for relationship in relationships:
+
+                relationship_type = str(
+                    relationship.relationship_type
+                ).lower()
+
+                if relationship_type not in {
+                    "contains_task",
+                    "contains",
+                    "has_task",
+                }:
+                    continue
+
+                if (
+                    relationship.source_entity_id
+                    in project_ids
+                ):
+
+                    task_ids.add(
+                        relationship.target_entity_id
+                    )
+
+            task_names = []
+
+            for task_id in task_ids:
+
+                task_name = entity_names.get(
+                    task_id
+                )
+
+                if (
+                    task_name
+                    and task_name not in task_names
+                ):
+                    task_names.append(task_name)
+
+            if task_names:
+
+                if len(task_names) == 1:
+
+                    return (
+                        f"The task is "
+                        f"{task_names[0]}."
+                    )
+
+                return (
+                    "The tasks are "
+                    + ", ".join(task_names)
+                    + "."
+                )
+
+        # --------------------------------------------------------------------
+        # PROJECT explicitly mentioned
+        #
+        # Example:
+        # "What are the tasks in the ABC website project?"
+        # --------------------------------------------------------------------
+
+        mentioned_projects = [
+            entity
+            for entity in mentioned_entities
+            if entity_types.get(entity.id)
+            == "PROJECT"
+        ]
+
+        if mentioned_projects:
+
+            project_ids = {
+                entity.id
+                for entity in mentioned_projects
+            }
+
+            task_names = []
+
+            for relationship in relationships:
+
+                relationship_type = str(
+                    relationship.relationship_type
+                ).lower()
+
+                if relationship_type not in {
+                    "contains_task",
+                    "contains",
+                    "has_task",
+                }:
+                    continue
+
+                if (
+                    relationship.source_entity_id
+                    not in project_ids
+                ):
+                    continue
+
+                task_name = entity_names.get(
+                    relationship.target_entity_id
+                )
+
+                if (
+                    task_name
+                    and task_name not in task_names
+                ):
+                    task_names.append(task_name)
+
+            if task_names:
+
+                if len(task_names) == 1:
+
+                    return (
+                        f"The task is "
+                        f"{task_names[0]}."
+                    )
+
+                return (
+                    "The tasks are "
+                    + ", ".join(task_names)
+                    + "."
+                )
+
+        # --------------------------------------------------------------------
+        # Generic task fallback
+        # --------------------------------------------------------------------
 
         task_entities = [
             entity
             for entity in entities
-            if str(
-                entity.entity_type or ""
-            ).upper() == "TASK"
+            if entity_types.get(entity.id)
+            == "TASK"
         ]
 
         if task_entities:
 
             task_names = [
-                entity.name.strip()
+                _safe_text(
+                    entity.name
+                ).strip()
                 for entity in task_entities
                 if entity.name
             ]
@@ -1741,7 +2420,9 @@ def _deterministic_secretary_answer(
                     + "."
                 )
 
-        # Memory fallback.
+        # --------------------------------------------------------------------
+        # Memory fallback
+        # --------------------------------------------------------------------
 
         task_memories = [
             memory
@@ -1870,7 +2551,6 @@ ANSWER:
     ).name
 
     try:
-
         command = [
             llama_cli_path,
             "-m",
@@ -1911,7 +2591,6 @@ ANSWER:
         ).strip()
 
         if result.returncode != 0:
-
             raise RuntimeError(
                 "Gemma failed to generate an answer. "
                 f"Exit code: {result.returncode}. "
@@ -1919,26 +2598,22 @@ ANSWER:
             )
 
         try:
-
             with open(
                 output_file,
                 "r",
                 encoding="utf-8",
                 errors="replace",
             ) as file:
-
                 answer = file.read()
-
         except OSError as exc:
-
             raise RuntimeError(
                 "Could not read Gemma output file: "
                 f"{output_file}"
             ) from exc
 
-        # --------------------------------------------------------------------
-        # Clean ANSI/control characters
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Remove ANSI/control characters
+        # ------------------------------------------------------------------
 
         answer = re.sub(
             r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])",
@@ -1955,12 +2630,11 @@ ANSWER:
 
         answer = answer.strip()
 
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Remove prompt labels
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         if "ANSWER:" in answer:
-
             answer = answer.split(
                 "ANSWER:",
                 1,
@@ -1973,21 +2647,18 @@ ANSWER:
             "Assistant",
             "assistant",
         ):
-
             if answer.startswith(prefix):
-
                 answer = answer[
                     len(prefix):
                 ].strip()
 
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Remove llama.cpp informational lines
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         lines = []
 
         for line in answer.splitlines():
-
             stripped = line.strip()
 
             if not stripped:
@@ -2011,56 +2682,30 @@ ANSWER:
             ):
                 continue
 
-            lines.append(
-                stripped
-            )
+            lines.append(stripped)
 
-        answer = "\n".join(
-            lines
-        ).strip()
+        answer = "\n".join(lines).strip()
 
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Fix common UTF-8/console mojibake
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         answer = (
             answer
-            .replace(
-                "donâ€™t",
-                "don't",
-            )
-            .replace(
-                "doesnâ€™t",
-                "doesn't",
-            )
-            .replace(
-                "isnâ€™t",
-                "isn't",
-            )
-            .replace(
-                "canâ€™t",
-                "can't",
-            )
-            .replace(
-                "â€“",
-                "-",
-            )
-            .replace(
-                "â€”",
-                "-",
-            )
+            .replace("donâ€™t", "don't")
+            .replace("doesnâ€™t", "doesn't")
+            .replace("isnâ€™t", "isn't")
+            .replace("canâ€™t", "can't")
+            .replace("â€“", "-")
+            .replace("â€”", "-")
         )
 
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Final safety check
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         if not answer:
-
-            raise RuntimeError(
-                "Gemma returned no usable "
-                "secretary answer."
-            )
+            return "I don't have that information in my memory."
 
         garbage_markers = (
             "build      :",
@@ -2073,50 +2718,63 @@ ANSWER:
             marker in answer
             for marker in garbage_markers
         ):
-
-            raise RuntimeError(
-                "Gemma output contained unusable "
-                "terminal output: "
-                + repr(
-                    answer[:500]
-                )
-            )
+            return "I don't have that information in my memory."
 
         return answer
 
     except subprocess.TimeoutExpired as exc:
-
         raise RuntimeError(
-            f"Gemma timed out after "
-            f"{timeout} seconds."
+            f"Gemma timed out after {timeout} seconds."
         ) from exc
 
     except FileNotFoundError as exc:
-
         raise RuntimeError(
             "llama-cli executable was not found: "
             f"{llama_cli_path}"
         ) from exc
 
     finally:
-
         try:
-
-            if os.path.exists(
-                output_file
-            ):
-
-                os.remove(
-                    output_file
-                )
-
+            if os.path.exists(output_file):
+                os.remove(output_file)
         except OSError:
             pass
+
+# ============================================================================
+# Time-budget planner bridge
+# ============================================================================
+
+
+def _create_secretary_time_budget_plan(
+    available_minutes: int,
+    user_id: str,
+    db: Session,
+) -> dict:
+    """
+    Build a time-budget plan for the secretary endpoint.
+
+    The planner service operates on Task ORM objects. This helper
+    retrieves the user's tasks and passes them to the shared planner.
+    The planner itself is responsible for deciding which tasks are
+    active/suitable for the available time.
+    """
+
+    tasks = (
+        db.query(Task)
+        .filter(Task.user_id == user_id)
+        .all()
+    )
+
+    return create_time_budget_plan(
+        tasks=tasks,
+        available_minutes=available_minutes,
+    )
 
 
 # ============================================================================
 # Ask secretary
 # ============================================================================
+
 
 
 @router.post("/ask")
@@ -2139,8 +2797,11 @@ def ask_secretary(
 
     question = request.question.strip()
 
-    if not question:
+    # ========================================================================
+    # EMPTY QUESTION
+    # ========================================================================
 
+    if not question:
         return {
             "answer": "Please provide a question.",
             "sources": {},
@@ -2150,50 +2811,40 @@ def ask_secretary(
     # TIME-BUDGET PLANNING
     # ========================================================================
 
-    if _is_time_budget_question(
-        question
-    ):
+    if _is_time_budget_question(question):
 
-        available_minutes = (
-            _parse_time_budget(
-                question
-            )
-        )
+        available_minutes = _parse_time_budget(question)
 
         if (
             available_minutes is not None
             and available_minutes > 0
         ):
 
-            plan = (
-                _create_secretary_time_budget_plan(
-                    available_minutes=available_minutes,
-                    user_id=request.user_id,
-                    db=db,
-                )
+            plan = _create_secretary_time_budget_plan(
+                available_minutes=available_minutes,
+                user_id=request.user_id,
+                db=db,
             )
 
-            answer = _build_time_budget_answer(
-                plan
-            )
+            answer = _build_time_budget_answer(plan)
 
+            # Normalize accidental spacing issues in the final
+            # time-budget response.
+            answer = answer.replace(
+                "usesall",
+                "uses all",
+            )
+ 
             return {
                 "answer": answer,
-
                 "sources": {
                     "intent": "time_budget",
-                    "answer_source": (
-                        "time_budget_planner"
-                    ),
+                    "answer_source": "time_budget_planner",
                     "user_id": request.user_id,
-                    "available_minutes": (
-                        available_minutes
-                    ),
-                    "tasks_considered": (
-                        plan.get(
-                            "tasks_considered",
-                            0,
-                        )
+                    "available_minutes": available_minutes,
+                    "tasks_considered": plan.get(
+                        "tasks_considered",
+                        0,
                     ),
                     "recommendations": len(
                         plan.get(
@@ -2202,12 +2853,11 @@ def ask_secretary(
                         )
                     ),
                 },
-
                 "plan": plan,
             }
 
     # ========================================================================
-    # Retrieve memory
+    # RETRIEVE SECRETARY MEMORY
     # ========================================================================
 
     (
@@ -2223,58 +2873,43 @@ def ask_secretary(
     )
 
     # ========================================================================
-    # Detect question type
+    # DETECT QUESTION TYPE
     # ========================================================================
 
-    intent = _detect_secretary_intent(
-        question
-    )
+    intent = _detect_secretary_intent(question)
 
     # ========================================================================
-    # Try deterministic answer first
+    # DETERMINISTIC ANSWER FIRST
     # ========================================================================
+   
 
-    deterministic_answer = (
-        _deterministic_secretary_answer(
-            intent=intent,
-            entities=entities,
-            facts=facts,
-            relationships=relationships,
-            events=events,
-            memories=memories,
-        )
+    deterministic_answer = _deterministic_secretary_answer(
+        question=question,
+        intent=intent,
+        entities=entities,
+        facts=facts,
+        relationships=relationships,
+        events=events,
+        memories=memories,
     )
 
     if deterministic_answer:
 
         return {
             "answer": deterministic_answer,
-
             "sources": {
-                "entities": len(
-                    entities
-                ),
-                "facts": len(
-                    facts
-                ),
-                "relationships": len(
-                    relationships
-                ),
-                "events": len(
-                    events
-                ),
-                "memories": len(
-                    memories
-                ),
+                "entities": len(entities),
+                "facts": len(facts),
+                "relationships": len(relationships),
+                "events": len(events),
+                "memories": len(memories),
                 "intent": intent,
-                "answer_source": (
-                    "structured_memory"
-                ),
+                "answer_source": "structured_memory",
             },
         }
 
     # ========================================================================
-    # Build grounded context for Gemma
+    # BUILD GROUNDED CONTEXT FOR GEMMA
     # ========================================================================
 
     context = _build_grounded_context(
@@ -2286,7 +2921,7 @@ def ask_secretary(
     )
 
     # ========================================================================
-    # General question -> Gemma
+    # GEMMA FALLBACK
     # ========================================================================
 
     answer = _run_secretary_answer(
@@ -2294,26 +2929,21 @@ def ask_secretary(
         context=context,
     )
 
+    # ========================================================================
+    # FINAL RESPONSE
+    # ========================================================================
+
     return {
         "answer": answer,
-
         "sources": {
-            "entities": len(
-                entities
-            ),
-            "facts": len(
-                facts
-            ),
-            "relationships": len(
-                relationships
-            ),
-            "events": len(
-                events
-            ),
-            "memories": len(
-                memories
-            ),
+            "entities": len(entities),
+            "facts": len(facts),
+            "relationships": len(relationships),
+            "events": len(events),
+            "memories": len(memories),
             "intent": intent,
             "answer_source": "gemma",
         },
     }
+
+

@@ -33,6 +33,7 @@ from .source_extractor import (
     extract_source_information,
     merge_source_first,
 )
+from .embedding_service import create_memory_embedding
 
 DEFAULT_USER_ID = "default"
 
@@ -1897,32 +1898,40 @@ def process_raw_note(
                     item.get("entity")
                 ).lower()
             )
+            memory = Memory(
+                user_id=user_id,
+                memory_type=_clean_name(
+                    item.get("memory_type")
+                    or item.get("type")
+                    or "general"
+                ),
+                content=content,
+                importance=_safe_score(
+                    item.get("importance"),
+                    0.5,
+                ),
+                confidence=_safe_score(
+                    item.get("confidence"),
+                    1.0,
+                ),
+                entity_id=(
+                    primary.id
+                    if primary
+                    else None
+                ),
+                source_note_id=note.id,
+                is_active=True,
+            )
 
-            db.add(
-                Memory(
-                    user_id=user_id,
-                    memory_type=_clean_name(
-                        item.get("memory_type")
-                        or item.get("type")
-                        or "general"
-                    ),
-                    content=content,
-                    importance=_safe_score(
-                        item.get("importance"),
-                        0.5,
-                    ),
-                    confidence=_safe_score(
-                        item.get("confidence"),
-                        1.0,
-                    ),
-                    entity_id=(
-                        primary.id
-                        if primary
-                        else None
-                    ),
-                    source_note_id=note.id,
-                    is_active=True,
-                )
+            db.add(memory)
+
+            # Flush so memory.id exists before creating
+            # the related embedding row.
+            db.flush()
+
+            create_memory_embedding(
+                db=db,
+                memory=memory,
             )
 
             memory_count += 1
